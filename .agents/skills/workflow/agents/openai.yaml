@@ -1,0 +1,7 @@
+interface:
+  display_name: "Workflow"
+  short_description: "Start or resume the repo workflow"
+  default_prompt: "Use $workflow to start, resume, or inspect the repo-local workflow for this request."
+
+policy:
+  allow_implicit_invocation: false

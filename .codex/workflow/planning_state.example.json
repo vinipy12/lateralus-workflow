@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "status": "planning",
+  "feature_request": "Add a planning workflow that produces an approval-ready implementation plan before any code changes.",
+  "approved_plan_path": ".codex/workflow/approved-plan.json",
+  "context_path": ".codex/workflow/context.json",
+  "discovery_dossier_path": ".codex/workflow/discovery_dossier.json",
+  "scope_contract_path": ".codex/workflow/scope_contract.json",
+  "architecture_constraints_path": ".codex/workflow/architecture_constraints.json",
+  "planning_trace_path": ".codex/workflow/planning_trace.json",
+  "clarifying_question_limit": 3,
+  "discovery_callback_limit": 2,
+  "revision_count": 1,
+  "latest_user_feedback": "Reduce the number of steps and reuse the existing workflow state machine."
+}

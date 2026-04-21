@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/workflow/scripts/user_prompt_hook.py",
+            "timeout": 30,
+            "statusMessage": "checking workflow activation request"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/workflow/scripts/stop_hook.py",
+            "timeout": 30,
+            "statusMessage": "evaluating workflow step state"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Codex Workflow State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "workflow_name",
+    "workflow_status",
+    "mode",
+    "plan_path",
+    "review_path",
+    "ship_skill",
+    "current_step_id",
+    "base_branch",
+    "request_codex_review",
+    "steps"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "workflow_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workflow_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "ship_pending",
+        "complete"
+      ]
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "stepwise",
+        "ship"
+      ]
+    },
+    "plan_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "review_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ship_skill": {
+      "type": "string",
+      "minLength": 1
+    },
+    "current_step_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_branch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "request_codex_review": {
+      "type": "boolean"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "goal",
+          "context",
+          "constraints",
+          "done_when",
+          "verify_cmds",
+          "agents_paths",
+          "commit_message",
+          "status",
+          "review_summary"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1
+          },
+          "context": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "constraints": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "done_when": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "verify_cmds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "agents_paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "commit_message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "implementing",
+              "review_pending",
+              "fix_pending",
+              "commit_pending",
+              "committed",
+              "shipped"
+            ]
+          },
+          "review_summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

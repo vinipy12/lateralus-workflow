@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Codex Workflow Planning State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "status",
+    "feature_request",
+    "approved_plan_path",
+    "context_path",
+    "discovery_dossier_path",
+    "scope_contract_path",
+    "architecture_constraints_path",
+    "planning_trace_path",
+    "clarifying_question_limit",
+    "discovery_callback_limit",
+    "revision_count",
+    "latest_user_feedback"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "discuss",
+        "discovery",
+        "architecture_audit",
+        "planning",
+        "product_scope_audit",
+        "skeptic_audit",
+        "convergence",
+        "revising",
+        "blocked",
+        "approval_ready"
+      ]
+    },
+    "feature_request": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approved_plan_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "context_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "discovery_dossier_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope_contract_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "architecture_constraints_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "planning_trace_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "clarifying_question_limit": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "discovery_callback_limit": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "revision_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "latest_user_feedback": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

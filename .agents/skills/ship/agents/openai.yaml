@@ -1,0 +1,15 @@
+interface:
+  display_name: "Ship Workflow"
+  short_description: "Push a ready branch and open the PR"
+  default_prompt: "Use $ship to push the current branch, create the pull request, and report the final PR URL."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "github"
+      description: "GitHub MCP server for PR creation and comments"
+      transport: "streamable_http"
+      url: "https://api.githubcopilot.com/mcp/"
+
+policy:
+  allow_implicit_invocation: true

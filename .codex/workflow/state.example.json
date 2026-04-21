@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "workflow_name": "example feature rollout",
+  "workflow_status": "active",
+  "mode": "ship",
+  "plan_path": "PLANS.md",
+  "review_path": "code_review.md",
+  "ship_skill": "ship",
+  "current_step_id": "step-1",
+  "base_branch": "origin/main",
+  "request_codex_review": true,
+  "steps": [
+    {
+      "id": "step-1",
+      "title": "Implement the first commit-worthy slice",
+      "goal": "Land the first execution step and verify it before review.",
+      "context": [
+        "app/example/module.py",
+        "tests/example/test_module.py"
+      ],
+      "constraints": [
+        "Keep the diff scoped to this execution step.",
+        "Update AGENTS guidance only if the durable rules changed."
+      ],
+      "done_when": [
+        "The requested behavior for step 1 works.",
+        "Step-specific verification passes."
+      ],
+      "verify_cmds": [
+        "uv run pytest tests/example/test_module.py"
+      ],
+      "agents_paths": [
+        "AGENTS.md",
+        "app/example/AGENTS.md"
+      ],
+      "commit_message": "feature: land example step 1",
+      "status": "implementing",
+      "review_summary": null
+    },
+    {
+      "id": "step-2",
+      "title": "Land the second commit-worthy slice",
+      "goal": "Complete the next execution step only after step 1 is committed.",
+      "context": [
+        "app/example/second_module.py"
+      ],
+      "constraints": [
+        "Assume step 1 is already committed before this work starts."
+      ],
+      "done_when": [
+        "The requested behavior for step 2 works."
+      ],
+      "verify_cmds": [
+        "uv run pytest tests/example/test_second_module.py"
+      ],
+      "agents_paths": [
+        "AGENTS.md"
+      ],
+      "commit_message": "feature: land example step 2",
+      "status": "pending",
+      "review_summary": null
+    }
+  ]
+}

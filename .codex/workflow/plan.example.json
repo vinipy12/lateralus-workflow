@@ -1,0 +1,120 @@
+{
+  "plan_id": "example-feature-rollout",
+  "workflow_name": "Example feature rollout",
+  "summary": "Deliver the example feature as two approval-ready, commit-worthy slices.",
+  "mode": "ship",
+  "base_branch": "origin/main",
+  "request_codex_review": true,
+  "requirements": [
+    {
+      "id": "R1",
+      "kind": "behavior",
+      "text": "Land the first behavior change in an isolated slice."
+    },
+    {
+      "id": "R2",
+      "kind": "behavior",
+      "text": "Land the follow-up behavior change in a second isolated slice."
+    },
+    {
+      "id": "R3",
+      "kind": "verification",
+      "text": "Each slice declares the command that verifies it before approval."
+    }
+  ],
+  "assumptions": [
+    "The existing example modules are the correct extension points."
+  ],
+  "open_questions": [],
+  "out_of_scope": [
+    "Additional refactors beyond the two verified slices."
+  ],
+  "steps": [
+    {
+      "id": "step-1",
+      "title": "Add the first verified slice",
+      "goal": "Land the first commit-worthy behavior change.",
+      "requirement_ids": [
+        "R1",
+        "R3"
+      ],
+      "context": [
+        "app/example/module.py",
+        "tests/example/test_module.py"
+      ],
+      "planned_updates": [
+        "app/example/module.py",
+        "tests/example/test_module.py"
+      ],
+      "planned_creates": [],
+      "constraints": [
+        "Keep the diff scoped to the first slice."
+      ],
+      "justification": "This isolates the first behavior change so review and rollback remain simple.",
+      "files_read_first": [
+        "app/example/module.py",
+        "tests/example/test_module.py"
+      ],
+      "interfaces_to_preserve": [
+        "Example module public behavior contract"
+      ],
+      "avoid_touching": [
+        "app/example/second_module.py"
+      ],
+      "verification_targets": [
+        "tests/example/test_module.py"
+      ],
+      "done_when": [
+        "The behavior works.",
+        "The targeted test passes."
+      ],
+      "verify_cmds": [
+        "uv run pytest tests/example/test_module.py"
+      ],
+      "commit_message": "feature: add first verified slice"
+    },
+    {
+      "id": "step-2",
+      "title": "Land the follow-up slice",
+      "goal": "Complete the second commit-worthy behavior change.",
+      "requirement_ids": [
+        "R2",
+        "R3"
+      ],
+      "context": [
+        "app/example/second_module.py",
+        "tests/example/test_second_module.py"
+      ],
+      "planned_updates": [
+        "app/example/second_module.py",
+        "tests/example/test_second_module.py"
+      ],
+      "planned_creates": [],
+      "constraints": [
+        "Keep the follow-up scoped to the second slice."
+      ],
+      "justification": "This lands the second behavior change without reopening the first slice.",
+      "files_read_first": [
+        "app/example/second_module.py",
+        "tests/example/test_second_module.py"
+      ],
+      "interfaces_to_preserve": [
+        "Second example module public behavior contract"
+      ],
+      "avoid_touching": [
+        "app/example/module.py"
+      ],
+      "verification_targets": [
+        "tests/example/test_second_module.py"
+      ],
+      "done_when": [
+        "The second slice works.",
+        "The follow-up targeted test passes."
+      ],
+      "verify_cmds": [
+        "uv run pytest tests/example/test_second_module.py"
+      ],
+      "commit_message": "feature: land the follow-up slice"
+    }
+  ]
+}
