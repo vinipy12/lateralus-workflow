@@ -32,6 +32,7 @@ DEFAULT_ARCHITECTURE_CONSTRAINTS_PATH = WORKFLOW_DIR / "architecture_constraints
 DEFAULT_PLANNING_TRACE_PATH = WORKFLOW_DIR / "planning_trace.json"
 DEFAULT_V0_PLAN_BASELINE_PATH = WORKFLOW_DIR / "approved-plan-v0.json"
 DEFAULT_V0_DISCOVERY_BASELINE_PATH = WORKFLOW_DIR / "discovery-dossier-v0.json"
+PLANNING_STATE_TOOL_COMMAND = "python3 scripts/planning_state.py"
 
 VALID_PLANNING_STATUSES = {
     "discuss",
@@ -361,13 +362,13 @@ def planning_activation_prompt(state: dict[str, Any], *, revision_mode: bool = F
         "- Any step that claims compatibility or verification across discovered entry points must include the "
         "direct consumer tests implied by that blast radius, not just a broad end-to-end check.\n"
         "- Prefer the smallest sufficient design and reject speculative abstractions or generic frameworks unless the milestone truly needs them.\n"
-        "- Before you mark the plan approval-ready, run "
-        "`python3 .codex/workflow/scripts/planning_state.py audit-plan` and fix any reported audit issues.\n"
-        "- When the plan is approval-ready, write the canonical plan JSON and run "
-        "`python3 .codex/workflow/scripts/planning_state.py set-status approval_ready`.\n"
+        f"- Before you mark the plan approval-ready, run `{PLANNING_STATE_TOOL_COMMAND} audit-plan` and fix any "
+        "reported audit issues.\n"
+        f"- When the plan is approval-ready, write the canonical plan JSON and run "
+        f"`{PLANNING_STATE_TOOL_COMMAND} set-status approval_ready`.\n"
         "- Present only the rendered plan summary to the user and ask for explicit approval.\n"
-        "- If the plan is blocked, run `python3 .codex/workflow/scripts/planning_state.py set-status blocked` "
-        "and explain the blocker."
+        f"- If the plan is blocked, run `{PLANNING_STATE_TOOL_COMMAND} set-status blocked` and explain the "
+        "blocker."
     )
 
 

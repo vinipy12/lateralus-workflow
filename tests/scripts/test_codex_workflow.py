@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 from copy import deepcopy
@@ -19,6 +20,11 @@ PLANNING_STATE_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "planning_stat
 PLAN_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "plan.example.json"
 WORKFLOW_SKILL_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "SKILL.md"
 WORKFLOW_SKILL_OPENAI_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "agents" / "openai.yaml"
+WORKFLOW_ROUTER_SKILL_SCRIPT_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "scripts" / "workflow_router.py"
+PLANNING_STATE_SKILL_SCRIPT_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "scripts" / "planning_state.py"
+WORKFLOW_STATE_SKILL_SCRIPT_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "scripts" / "workflow_state.py"
+SHIP_SKILL_PATH = REPO_ROOT / ".agents" / "skills" / "ship" / "SKILL.md"
+SHIP_WORKFLOW_STATE_SKILL_SCRIPT_PATH = REPO_ROOT / ".agents" / "skills" / "ship" / "scripts" / "workflow_state.py"
 PLUGIN_MANIFEST_PATH = REPO_ROOT / ".codex-plugin" / "plugin.json"
 
 
@@ -261,6 +267,7 @@ def test_review_pending_step_blocks_for_review_gate():
     assert changed is False
     assert decision.action == "block"
     assert "code_review.md" in decision.prompt
+    assert "python3 scripts/workflow_state.py set-step-status step-1 commit_pending" in decision.prompt
     assert "set-step-status step-1 commit_pending" in decision.prompt
 
 
@@ -453,12 +460,52 @@ def test_workflow_router_status_blocks_on_invalid_planning_state():
 def test_workflow_skill_is_scaffolded():
     assert WORKFLOW_SKILL_PATH.exists()
     assert WORKFLOW_SKILL_OPENAI_PATH.exists()
+    assert WORKFLOW_ROUTER_SKILL_SCRIPT_PATH.exists()
+    assert PLANNING_STATE_SKILL_SCRIPT_PATH.exists()
+    assert WORKFLOW_STATE_SKILL_SCRIPT_PATH.exists()
+    assert SHIP_SKILL_PATH.exists()
+    assert SHIP_WORKFLOW_STATE_SKILL_SCRIPT_PATH.exists()
 
     skill_text = WORKFLOW_SKILL_PATH.read_text(encoding="utf-8")
     metadata_text = WORKFLOW_SKILL_OPENAI_PATH.read_text(encoding="utf-8")
 
-    assert "python3 .codex/workflow/scripts/workflow_router.py planning-start" in skill_text
+    assert "python3 scripts/workflow_router.py planning-start" in skill_text
+    assert ".codex/workflow/scripts/workflow_router.py" not in skill_text
     assert "Use $workflow" in metadata_text
+
+
+def test_ship_skill_uses_bundled_workflow_state_wrapper():
+    skill_text = SHIP_SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "python3 scripts/workflow_state.py set-step-status" in skill_text
+    assert ".codex/workflow/scripts/workflow_state.py" not in skill_text
+
+
+def test_workflow_skill_router_wrapper_runs_from_foreign_worktree():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = subprocess.run(
+            [sys.executable, str(WORKFLOW_ROUTER_SKILL_SCRIPT_PATH), "--json", "status"],
+            cwd=tmpdir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "status"
+    assert payload["message"] == "no active workflow state"
+
+
+def test_planning_prompt_uses_bundled_planning_state_wrapper():
+    planning_lib = _load_planning_lib()
+    state = planning_lib.build_planning_state("Plan a plugin-safe workflow wrapper")
+
+    prompt = planning_lib.planning_activation_prompt(state)
+
+    assert "python3 scripts/planning_state.py audit-plan" in prompt
+    assert ".codex/workflow/scripts/planning_state.py" not in prompt
 
 
 def test_plugin_manifest_does_not_claim_hook_bundling():

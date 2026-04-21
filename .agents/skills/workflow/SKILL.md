@@ -5,21 +5,22 @@ description: Start, resume, revise, approve, or inspect the repo-local workflow 
 
 # Workflow
 
-Use this skill as the native entrypoint for the repo-local workflow engine.
+Use this skill as the native entrypoint for the plugin-bundled workflow engine.
 
 ## Router First
 
-Prefer the router CLI over editing workflow JSON by hand:
+Prefer the bundled router CLI over editing workflow JSON by hand:
 
-- `python3 .codex/workflow/scripts/workflow_router.py planning-start "<feature request>"`
-- `python3 .codex/workflow/scripts/workflow_router.py planning-revise "<feedback>"`
-- `python3 .codex/workflow/scripts/workflow_router.py planning-approve`
-- `python3 .codex/workflow/scripts/workflow_router.py execution-start [plan-file]`
-- `python3 .codex/workflow/scripts/workflow_router.py resume`
-- `python3 .codex/workflow/scripts/workflow_router.py status`
-- `python3 .codex/workflow/scripts/workflow_router.py cancel`
+- `python3 scripts/workflow_router.py planning-start "<feature request>"`
+- `python3 scripts/workflow_router.py planning-revise "<feedback>"`
+- `python3 scripts/workflow_router.py planning-approve`
+- `python3 scripts/workflow_router.py execution-start [plan-file]`
+- `python3 scripts/workflow_router.py resume`
+- `python3 scripts/workflow_router.py status`
+- `python3 scripts/workflow_router.py cancel`
 
 After running the router, treat its printed context as the canonical workflow instruction for the current phase. Do not ask the user to run setup commands that the router already handled.
+The bundled `scripts/` wrappers live with the installed skill and operate on repo-local `.codex/workflow/*.json` artifacts in the current project.
 
 ## Planning
 
@@ -28,7 +29,7 @@ For a new feature request:
 1. Run `planning-start`.
 2. Follow the discuss-first planning instructions from the router output.
 3. Keep the work inside `.codex/workflow/` artifacts until the plan is approval-ready.
-4. Before approval, run `python3 .codex/workflow/scripts/planning_state.py audit-plan`.
+4. Before approval, run `python3 scripts/planning_state.py audit-plan`.
 5. When the plan is ready, use `planning-approve` to transition into execution.
 
 For plan revisions:
@@ -41,7 +42,7 @@ For plan revisions:
 For an active execution workflow:
 
 1. Run `resume` to load the exact next instruction for the current step.
-2. Use `.codex/workflow/scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
+2. Use `python3 scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
 3. When the workflow reaches ship, use `$ship`.
 
 For direct activation from an approved plan artifact:

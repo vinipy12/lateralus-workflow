@@ -35,6 +35,7 @@ The plugin currently exposes:
 - repo-local legacy `/workflow ...` hooks defined in `.codex/hooks.json`
 
 Installing the plugin does not activate `.codex/hooks.json`; users who want the legacy `/workflow ...` trigger must wire those hooks into their own Codex config separately. `$workflow` remains the intended interface.
+Installed plugin skills use bundled `scripts/` wrappers from the skill directory; the repo-local `.codex/workflow/scripts/...` commands below are for developing this workflow repository directly.
 
 ## Installation
 
