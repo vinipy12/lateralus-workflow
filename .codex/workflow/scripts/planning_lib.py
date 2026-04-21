@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -32,7 +33,12 @@ DEFAULT_ARCHITECTURE_CONSTRAINTS_PATH = WORKFLOW_DIR / "architecture_constraints
 DEFAULT_PLANNING_TRACE_PATH = WORKFLOW_DIR / "planning_trace.json"
 DEFAULT_V0_PLAN_BASELINE_PATH = WORKFLOW_DIR / "approved-plan-v0.json"
 DEFAULT_V0_DISCOVERY_BASELINE_PATH = WORKFLOW_DIR / "discovery-dossier-v0.json"
-PLANNING_STATE_TOOL_COMMAND = "python3 scripts/planning_state.py"
+SKILL_SCRIPTS_DIR = os.environ.get("LATERALUS_WORKFLOW_SKILL_SCRIPTS_DIR")
+PLANNING_STATE_TOOL_COMMAND = (
+    f"python3 {shlex.quote(str(Path(SKILL_SCRIPTS_DIR) / 'planning_state.py'))}"
+    if SKILL_SCRIPTS_DIR
+    else "python3 .codex/workflow/scripts/planning_state.py"
+)
 
 VALID_PLANNING_STATUSES = {
     "discuss",

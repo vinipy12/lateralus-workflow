@@ -267,7 +267,7 @@ def test_review_pending_step_blocks_for_review_gate():
     assert changed is False
     assert decision.action == "block"
     assert "code_review.md" in decision.prompt
-    assert "python3 scripts/workflow_state.py set-step-status step-1 commit_pending" in decision.prompt
+    assert "python3 .codex/workflow/scripts/workflow_state.py set-step-status step-1 commit_pending" in decision.prompt
     assert "set-step-status step-1 commit_pending" in decision.prompt
 
 
@@ -498,14 +498,50 @@ def test_workflow_skill_router_wrapper_runs_from_foreign_worktree():
     assert payload["message"] == "no active workflow state"
 
 
-def test_planning_prompt_uses_bundled_planning_state_wrapper():
+def test_workflow_skill_router_wrapper_emits_bundled_planning_tool_path():
+    expected_command = f"python3 {PLANNING_STATE_SKILL_SCRIPT_PATH}"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = subprocess.run(
+            [sys.executable, str(WORKFLOW_ROUTER_SKILL_SCRIPT_PATH), "--json", "planning-start", "Plan a wrapper-safe flow"],
+            cwd=tmpdir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert expected_command in payload["additional_context"]
+
+
+def test_workflow_skill_router_wrapper_emits_bundled_workflow_state_tool_path():
+    expected_command = f"python3 {WORKFLOW_STATE_SKILL_SCRIPT_PATH}"
+    plan = _example_plan()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        plan_path = Path(tmpdir) / "plan.json"
+        plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(WORKFLOW_ROUTER_SKILL_SCRIPT_PATH), "--json", "execution-start", str(plan_path)],
+            cwd=tmpdir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert expected_command in payload["additional_context"]
+
+
+def test_planning_prompt_uses_repo_local_planning_state_cli_by_default():
     planning_lib = _load_planning_lib()
     state = planning_lib.build_planning_state("Plan a plugin-safe workflow wrapper")
 
     prompt = planning_lib.planning_activation_prompt(state)
 
-    assert "python3 scripts/planning_state.py audit-plan" in prompt
-    assert ".codex/workflow/scripts/planning_state.py" not in prompt
+    assert "python3 .codex/workflow/scripts/planning_state.py audit-plan" in prompt
 
 
 def test_plugin_manifest_does_not_claim_hook_bundling():
