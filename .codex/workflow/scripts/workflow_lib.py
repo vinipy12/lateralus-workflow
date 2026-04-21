@@ -197,6 +197,32 @@ def _validate_step(step: dict[str, Any]) -> None:
         for item in step[list_name]:
             if not isinstance(item, str) or not item.strip():
                 raise ValueError(f"{list_name} must contain non-empty strings for {step['id']}")
+    if "justification" in step and (
+        not isinstance(step["justification"], str) or not step["justification"].strip()
+    ):
+        raise ValueError(f"justification must be a non-empty string for {step['id']}")
+    for list_name in (
+        "files_read_first",
+        "interfaces_to_preserve",
+        "avoid_touching",
+        "verification_targets",
+        "risk_flags",
+        "blast_radius",
+        "decision_ids",
+        "depends_on",
+        "file_ownership",
+        "rollback_notes",
+        "operational_watchpoints",
+    ):
+        if list_name not in step:
+            continue
+        if not isinstance(step[list_name], list):
+            raise ValueError(f"{list_name} must be a list for {step['id']}")
+        for item in step[list_name]:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"{list_name} must contain non-empty strings for {step['id']}")
+    if "wave" in step and (not isinstance(step["wave"], int) or step["wave"] < 1):
+        raise ValueError(f"wave must be a positive integer for {step['id']}")
 
 
 def _coerce_plan_specs(parsed: Any, source_path: Path) -> list[dict[str, Any]]:
@@ -298,7 +324,7 @@ def _normalize_plan_step(raw_step: dict[str, Any], *, index: int) -> dict[str, A
     if review_summary is not None and not isinstance(review_summary, str):
         raise ValueError(f"review_summary must be a string or null for {step_id}")
 
-    return {
+    normalized_step = {
         "id": step_id,
         "title": title,
         "goal": goal,
@@ -311,6 +337,33 @@ def _normalize_plan_step(raw_step: dict[str, Any], *, index: int) -> dict[str, A
         "status": status,
         "review_summary": review_summary,
     }
+    justification = str(raw_step.get("justification") or "").strip()
+    if justification:
+        normalized_step["justification"] = justification
+
+    for list_name in (
+        "files_read_first",
+        "interfaces_to_preserve",
+        "avoid_touching",
+        "verification_targets",
+        "risk_flags",
+        "blast_radius",
+        "decision_ids",
+        "depends_on",
+        "file_ownership",
+        "rollback_notes",
+        "operational_watchpoints",
+    ):
+        values = _ensure_string_list(raw_step.get(list_name, []), field_name=f"{list_name} for {step_id}")
+        if values:
+            normalized_step[list_name] = values
+    wave = raw_step.get("wave")
+    if wave is not None:
+        if not isinstance(wave, int) or wave < 1:
+            raise ValueError(f"wave must be a positive integer for {step_id}")
+        normalized_step["wave"] = wave
+
+    return normalized_step
 
 
 def validate_plan_spec(plan_spec: dict[str, Any]) -> None:
@@ -457,6 +510,11 @@ def _validate_plan_step(
         "risk_flags",
         "blast_radius",
         "decision_ids",
+        "depends_on",
+        "wave",
+        "file_ownership",
+        "rollback_notes",
+        "operational_watchpoints",
     }
     unknown_fields = sorted(set(step.keys()) - allowed_fields)
     if unknown_fields:
@@ -524,9 +582,15 @@ def _validate_plan_step(
         "risk_flags",
         "blast_radius",
         "decision_ids",
+        "depends_on",
+        "file_ownership",
+        "rollback_notes",
+        "operational_watchpoints",
     ):
         if optional_list_name in step:
             _ensure_string_list(step[optional_list_name], field_name=f"{optional_list_name} for {step_id}")
+    if "wave" in step and (not isinstance(step["wave"], int) or step["wave"] < 1):
+        raise ValueError(f"wave must be a positive integer for {step_id}")
 
     return step_id, set(requirement_ids)
 
@@ -659,13 +723,42 @@ def _implementation_prompt(state: dict[str, Any], step: dict[str, Any], *, is_st
     context_lines = _bullets(step["context"])
     constraints_lines = _bullets(step["constraints"])
     done_lines = _bullets(step["done_when"])
+    justification_section = _optional_text_section("Justification", step.get("justification"))
+    files_read_first_section = _optional_bullets("Files to read first", step.get("files_read_first", []))
+    interfaces_section = _optional_bullets("Interfaces to preserve", step.get("interfaces_to_preserve", []))
+    avoid_touching_section = _optional_bullets("Avoid touching", step.get("avoid_touching", []))
+    verification_targets_section = _optional_bullets("Verification targets", step.get("verification_targets", []))
+    risk_flags_section = _optional_bullets("Risk flags", step.get("risk_flags", []))
+    blast_radius_section = _optional_bullets("Blast radius", step.get("blast_radius", []))
+    decision_ids_section = _optional_bullets("Decision IDs", step.get("decision_ids", []))
+    depends_on_section = _optional_bullets("Depends on", step.get("depends_on", []))
+    wave_section = _optional_text_section("Wave", step.get("wave"))
+    ownership_section = _optional_bullets("Owned files", step.get("file_ownership", []))
+    rollback_section = _optional_bullets("Rollback notes", step.get("rollback_notes", []))
+    watchpoints_section = _optional_bullets(
+        "Operational watchpoints",
+        step.get("operational_watchpoints", []),
+    )
     return (
         f"{intro}\n\n"
         f"Current workflow: `{state['workflow_name']}`.\n"
         f"Current step: `{step['id']}` - {step['title']}\n\n"
         f"Goal:\n{step['goal']}\n\n"
+        f"{justification_section}"
+        f"{wave_section}"
+        f"{depends_on_section}"
+        f"{ownership_section}"
+        f"{files_read_first_section}"
         f"Context:\n{context_lines}\n\n"
+        f"{interfaces_section}"
+        f"{avoid_touching_section}"
         f"Constraints:\n{constraints_lines}\n\n"
+        f"{verification_targets_section}"
+        f"{risk_flags_section}"
+        f"{blast_radius_section}"
+        f"{rollback_section}"
+        f"{watchpoints_section}"
+        f"{decision_ids_section}"
         f"Done when:\n{done_lines}\n\n"
         f"Verification commands:\n{verify_lines}\n\n"
         f"AGENTS.md scope check:\n{agents_lines}\n\n"
@@ -673,6 +766,7 @@ def _implementation_prompt(state: dict[str, Any], step: dict[str, Any], *, is_st
         "- Finish the step's implementation.\n"
         "- Run the step verification commands that apply.\n"
         "- Update the listed `AGENTS.md` files only if this step changed durable guidance.\n"
+        "- Update `STATE.md` if this step changes active initiative status, latest decisions, release state, or unresolved risks.\n"
         f"- When the step is ready for review, run `{STATE_TOOL_COMMAND} set-step-status {step['id']} review_pending`.\n"
         "- Continue in the same thread until the step is ready for the review gate."
     )
@@ -747,6 +841,20 @@ def _bullets(items: list[str]) -> str:
     if not items:
         return "- none"
     return "\n".join(f"- {item}" for item in items)
+
+
+def _optional_bullets(title: str, items: list[str]) -> str:
+    if not items:
+        return ""
+    return f"{title}:\n{_bullets(items)}\n\n"
+
+
+def _optional_text_section(title: str, value: Any) -> str:
+    if isinstance(value, int):
+        return f"{title}:\n{value}\n\n"
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    return f"{title}:\n{value.strip()}\n\n"
 
 
 def _shell_commands(commands: list[str]) -> str:

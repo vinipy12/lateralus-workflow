@@ -12,17 +12,27 @@ from planning_lib import (
     DEFAULT_PLANNING_STATE_PATH,
     DEFAULT_V0_DISCOVERY_BASELINE_PATH,
     DEFAULT_V0_PLAN_BASELINE_PATH,
+    PLANNING_PHASE_SEQUENCE,
     VALID_PLANNING_STATUSES,
+    advance_planning_phase,
     audit_planning_artifacts,
     compare_plan_specs,
     clear_planning_state,
+    set_planning_status,
     load_discovery_dossier,
     render_plan_comparison,
     load_planning_state,
     save_planning_state,
+    validate_phase_outputs,
     validate_planning_state,
 )
 from workflow_lib import load_plan_spec
+
+DEFAULT_COMPARE_CANDIDATE_PLAN_PATH = (
+    DEFAULT_APPROVED_PLAN_PATH
+    if DEFAULT_APPROVED_PLAN_PATH.exists()
+    else DEFAULT_APPROVED_PLAN_PATH.parent / "plan.example.json"
+)
 
 
 def main() -> int:
@@ -46,12 +56,25 @@ def main() -> int:
         help="Compare two approved-plan outputs and report whether the candidate is stronger than the baseline.",
     )
     compare_parser.add_argument("--baseline", type=Path, default=DEFAULT_V0_PLAN_BASELINE_PATH)
-    compare_parser.add_argument("--candidate", type=Path, default=DEFAULT_APPROVED_PLAN_PATH)
+    compare_parser.add_argument("--candidate", type=Path, default=DEFAULT_COMPARE_CANDIDATE_PLAN_PATH)
     compare_parser.add_argument("--baseline-discovery", type=Path, default=DEFAULT_V0_DISCOVERY_BASELINE_PATH)
     compare_parser.add_argument("--candidate-discovery", type=Path, default=DEFAULT_DISCOVERY_DOSSIER_PATH)
     compare_parser.add_argument("--touch-budget", type=int, default=8)
     compare_parser.add_argument("--create-budget", type=int, default=4)
     compare_parser.add_argument("--json", action="store_true", dest="json_output")
+
+    phase_validate_parser = subparsers.add_parser(
+        "validate-phase",
+        help="Validate the current planning phase outputs.",
+    )
+    phase_validate_parser.add_argument("--path", type=Path, default=DEFAULT_PLANNING_STATE_PATH)
+
+    advance_parser = subparsers.add_parser(
+        "advance",
+        help="Advance the planning state to the next deterministic phase.",
+    )
+    advance_parser.add_argument("target_status", nargs="?", choices=PLANNING_PHASE_SEQUENCE)
+    advance_parser.add_argument("--path", type=Path, default=DEFAULT_PLANNING_STATE_PATH)
 
     status_parser = subparsers.add_parser("set-status", help="Update the planning status.")
     status_parser.add_argument("status", choices=sorted(VALID_PLANNING_STATUSES))
@@ -113,9 +136,27 @@ def main() -> int:
             )
         return 0
 
+    if args.command == "validate-phase":
+        state = _require_state(args.path)
+        issues = validate_phase_outputs(state)
+        if issues:
+            print("planning phase validation failed:")
+            for issue in issues:
+                print(f"- {issue}")
+            return 1
+        print(f"planning phase valid: {state['phase_checkpoint']}")
+        return 0
+
+    if args.command == "advance":
+        state = _require_state(args.path)
+        state = advance_planning_phase(state, target_status=args.target_status)
+        save_planning_state(state, args.path)
+        print(f"planning status -> {state['status']}")
+        return 0
+
     if args.command == "set-status":
         state = _require_state(args.path)
-        state["status"] = args.status
+        state = set_planning_status(state, args.status)
         save_planning_state(state, args.path)
         print(f"planning status -> {args.status}")
         return 0

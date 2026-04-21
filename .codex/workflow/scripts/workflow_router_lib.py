@@ -356,12 +356,21 @@ def _load_planning_state_safe(path: Path) -> tuple[dict | None, str | None]:
 def _rebase_planning_artifacts(state: dict, planning_root: Path) -> dict:
     rebased = dict(state)
     planning_root = planning_root.resolve()
+    repo_root = planning_root
+    if planning_root.name == "workflow" and planning_root.parent.name == ".codex":
+        repo_root = planning_root.parent.parent
     rebased["approved_plan_path"] = str(planning_root / "approved-plan.json")
     rebased["context_path"] = str(planning_root / "context.json")
     rebased["discovery_dossier_path"] = str(planning_root / "discovery_dossier.json")
     rebased["scope_contract_path"] = str(planning_root / "scope_contract.json")
     rebased["architecture_constraints_path"] = str(planning_root / "architecture_constraints.json")
+    rebased["product_scope_audit_path"] = str(planning_root / "product_scope_audit.json")
+    rebased["skeptic_audit_path"] = str(planning_root / "skeptic_audit.json")
+    rebased["convergence_summary_path"] = str(planning_root / "convergence_summary.json")
     rebased["planning_trace_path"] = str(planning_root / "planning_trace.json")
+    rebased["project_memory_path"] = str(repo_root / "PROJECT.md")
+    rebased["requirements_memory_path"] = str(repo_root / "REQUIREMENTS.md")
+    rebased["state_memory_path"] = str(repo_root / "STATE.md")
     return rebased
 
 

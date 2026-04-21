@@ -5,44 +5,50 @@ description: Start, resume, revise, approve, or inspect the repo-local workflow 
 
 # Workflow
 
-Use this skill as the native entrypoint for the plugin-bundled workflow engine.
+Use this skill as the native entrypoint for the repo-local workflow engine.
 
 ## Router First
 
-Prefer the bundled router CLI over editing workflow JSON by hand:
+Prefer the repo-local wrapper CLI over editing workflow JSON by hand:
 
-- `python3 scripts/workflow_router.py planning-start "<feature request>"`
-- `python3 scripts/workflow_router.py planning-revise "<feedback>"`
-- `python3 scripts/workflow_router.py planning-approve`
-- `python3 scripts/workflow_router.py execution-start [plan-file]`
-- `python3 scripts/workflow_router.py resume`
-- `python3 scripts/workflow_router.py status`
-- `python3 scripts/workflow_router.py cancel`
+- `python3 .agents/skills/workflow/scripts/workflow_router.py planning-start "<feature request>"`
+- `python3 .agents/skills/workflow/scripts/workflow_router.py planning-revise "<feedback>"`
+- `python3 .agents/skills/workflow/scripts/workflow_router.py planning-approve`
+- `python3 .agents/skills/workflow/scripts/workflow_router.py execution-start [plan-file]`
+- `python3 .agents/skills/workflow/scripts/workflow_router.py resume`
+- `python3 .agents/skills/workflow/scripts/workflow_router.py status`
+- `python3 .agents/skills/workflow/scripts/workflow_router.py cancel`
 
 After running the router, treat its printed context as the canonical workflow instruction for the current phase. Do not ask the user to run setup commands that the router already handled.
-The bundled `scripts/` wrappers live with the installed skill and operate on repo-local `.codex/workflow/*.json` artifacts in the current project.
+The repo-local wrapper scripts live under `.agents/skills/workflow/scripts/` and operate on `.codex/workflow/*.json` artifacts in the current project.
 
 ## Planning
 
 For a new feature request:
 
 1. Run `planning-start`.
-2. Follow the discuss-first planning instructions from the router output.
+2. Follow the phase-specific planning contract from the router output.
 3. Keep the work inside `.codex/workflow/` artifacts until the plan is approval-ready.
-4. Before approval, run `python3 scripts/planning_state.py audit-plan`.
-5. When the plan is ready, use `planning-approve` to transition into execution.
+4. Advance phases mechanically with `python3 .agents/skills/workflow/scripts/planning_state.py advance [phase]`; do not jump phases by editing `status` in JSON.
+5. Use the repo-root memory docs while planning:
+   - `PROJECT.md` for product intent and durable constraints
+   - `REQUIREMENTS.md` for active backlog, accepted requirements, deferred scope, and milestone commitments
+   - `STATE.md` for active initiative, latest decisions, release state, and unresolved risks
+6. Before approval, run `python3 .agents/skills/workflow/scripts/planning_state.py audit-plan`.
+7. When the plan is ready, use `planning-approve` to transition into execution.
 
 For plan revisions:
 
 1. Run `planning-revise "<feedback>"`.
 2. Stay in planning. Do not start implementation.
+3. Re-enter the correct phase with `planning_state.py advance <phase>` only after the revised artifacts validate cleanly.
 
 ## Execution
 
 For an active execution workflow:
 
 1. Run `resume` to load the exact next instruction for the current step.
-2. Use `python3 scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
+2. Use `python3 .agents/skills/workflow/scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
 3. When the workflow reaches ship, use `$ship`.
 
 For direct activation from an approved plan artifact:
@@ -61,4 +67,8 @@ For direct activation from an approved plan artifact:
 - Treat `$workflow` as the canonical UX. `/workflow` is a legacy hook-based compatibility path.
 - Read `AGENTS.md` before acting on execution steps.
 - Keep planning JSON-first and execution stepwise.
+- Respect phase ownership:
+  - planning updates `PROJECT.md` only when product intent or durable constraints change
+  - planning updates `REQUIREMENTS.md` when scope or backlog commitments change
+  - execution and ship update `STATE.md`
 - Do not bypass the router unless you are already inside a live workflow step and only need a lower-level state update.

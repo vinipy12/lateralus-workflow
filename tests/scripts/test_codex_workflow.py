@@ -82,6 +82,21 @@ def _example_plan() -> dict:
                 "interfaces_to_preserve": ["Embedding service public behavior"],
                 "avoid_touching": ["app/api/embedding.py"],
                 "verification_targets": ["tests/ai/test_embedding_service.py"],
+                "risk_flags": ["Preserve existing embedding output shape for current consumers."],
+                "blast_radius": ["app/ai/embedding/service.py consumers"],
+                "decision_ids": ["D-EMBED-1"],
+                "depends_on": [],
+                "wave": 1,
+                "file_ownership": [
+                    "app/ai/embedding/service.py",
+                    "tests/ai/test_embedding_service.py",
+                ],
+                "rollback_notes": [
+                    "Revert the embedding behavior commit if current consumers regress.",
+                ],
+                "operational_watchpoints": [
+                    "Watch the embedding service public behavior contract during verification.",
+                ],
                 "done_when": ["The embedding flow uses the updated behavior."],
                 "verify_cmds": ["uv run pytest tests/ai/test_embedding_service.py"],
                 "commit_message": "feature: adjust embedding behavior",
@@ -94,8 +109,13 @@ def _write_supporting_planning_artifacts(
     state: dict,
     *,
     preserved_interfaces: list[str] | None = None,
+    project_constraints: list[str] | None = None,
     deferred: list[str] | None = None,
     open_questions: list[str] | None = None,
+    active_initiative: str | None = None,
+    product_scope_recommendation: str = "pass",
+    skeptic_recommendation: str = "pass",
+    unresolved_objections: list[str] | None = None,
 ) -> None:
     feature_request = state["feature_request"]
     Path(state["context_path"]).write_text(
@@ -149,6 +169,140 @@ def _write_supporting_planning_artifacts(
         ),
         encoding="utf-8",
     )
+    Path(state["product_scope_audit_path"]).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "feature_request": feature_request,
+                "included_scope": ["Produce an approval-ready plan."],
+                "deferred_scope": deferred or [],
+                "defaults_taken": ["Use direct verification targets."],
+                "unresolved_risks": [],
+                "recommendation": product_scope_recommendation,
+            }
+        ),
+        encoding="utf-8",
+    )
+    Path(state["skeptic_audit_path"]).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "feature_request": feature_request,
+                "objections": [],
+                "unresolved_objections": unresolved_objections or [],
+                "recommendation": skeptic_recommendation,
+            }
+        ),
+        encoding="utf-8",
+    )
+    Path(state["convergence_summary_path"]).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "feature_request": feature_request,
+                "included_scope": ["Produce an approval-ready plan."],
+                "deferred_scope": deferred or [],
+                "defaults_taken": ["Use direct verification targets."],
+                "unresolved_risks": [],
+                "approval_summary": "The plan is scoped, audited, and ready for approval.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    Path(state["project_memory_path"]).write_text(
+        "\n".join(
+            [
+                "# Project",
+                "",
+                "## Product Intent",
+                "- Build an auditable workflow kernel.",
+                "",
+                "## Target Users",
+                "- Workflow maintainers.",
+                "",
+                "## Durable Constraints",
+                *[
+                    f"- {item}"
+                    for item in (
+                        project_constraints
+                        or preserved_interfaces
+                        or ["Existing workflow entrypoints"]
+                    )
+                ],
+                "",
+                "## Strategy",
+                "- Stabilize the kernel before packaging.",
+                "",
+                "## Current Priorities",
+                "- Produce an approval-ready plan.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    Path(state["requirements_memory_path"]).write_text(
+        "\n".join(
+            [
+                "# Requirements",
+                "",
+                "## Active Backlog",
+                "- Produce an approval-ready plan.",
+                "",
+                "## Accepted Requirements",
+                "- The approved plan is audit-clean.",
+                "",
+                "## Deferred Scope",
+                *[f"- {item}" for item in (deferred or ["Unrelated cleanup."])],
+                "",
+                "## Milestone Commitments",
+                "- Keep planning artifacts JSON-first.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    Path(state["state_memory_path"]).write_text(
+        "\n".join(
+            [
+                "# State",
+                "",
+                "## Workflow Status",
+                "- Planning in progress.",
+                "",
+                "## Active Initiative",
+                f"- {active_initiative or 'Produce an approval-ready plan.'}",
+                "",
+                "## Latest Decisions",
+                "- Keep planning artifacts JSON-first.",
+                "",
+                "## Release State",
+                "- Pre-approval.",
+                "",
+                "## Unresolved Risks",
+                "- None.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _rebase_planning_state_paths(state: dict, tmpdir: str) -> dict:
+    tmp_root = Path(tmpdir)
+    rebased = dict(state)
+    rebased["approved_plan_path"] = str(tmp_root / "approved-plan.json")
+    rebased["context_path"] = str(tmp_root / "context.json")
+    rebased["discovery_dossier_path"] = str(tmp_root / "discovery_dossier.json")
+    rebased["scope_contract_path"] = str(tmp_root / "scope_contract.json")
+    rebased["architecture_constraints_path"] = str(tmp_root / "architecture_constraints.json")
+    rebased["product_scope_audit_path"] = str(tmp_root / "product_scope_audit.json")
+    rebased["skeptic_audit_path"] = str(tmp_root / "skeptic_audit.json")
+    rebased["convergence_summary_path"] = str(tmp_root / "convergence_summary.json")
+    rebased["planning_trace_path"] = str(tmp_root / "planning_trace.json")
+    rebased["project_memory_path"] = str(tmp_root / "PROJECT.md")
+    rebased["requirements_memory_path"] = str(tmp_root / "REQUIREMENTS.md")
+    rebased["state_memory_path"] = str(tmp_root / "STATE.md")
+    return rebased
 
 
 def test_example_state_is_valid():
@@ -169,9 +323,13 @@ def test_build_planning_state_starts_in_discuss():
     state = planning_lib.build_planning_state("Plan an improved workflow")
 
     assert state["status"] == "discuss"
+    assert state["phase_checkpoint"] == "discuss"
     assert state["context_path"].endswith("context.json")
     assert state["scope_contract_path"].endswith("scope_contract.json")
     assert state["architecture_constraints_path"].endswith("architecture_constraints.json")
+    assert state["project_memory_path"] == "PROJECT.md"
+    assert state["requirements_memory_path"] == "REQUIREMENTS.md"
+    assert state["state_memory_path"] == "STATE.md"
 
 
 def test_load_planning_state_backfills_v0_paths():
@@ -203,6 +361,82 @@ def test_load_planning_state_backfills_v0_paths():
     assert state["context_path"].endswith("context.json")
     assert state["scope_contract_path"].endswith("scope_contract.json")
     assert state["architecture_constraints_path"].endswith("architecture_constraints.json")
+    assert state["product_scope_audit_path"].endswith("product_scope_audit.json")
+    assert state["skeptic_audit_path"].endswith("skeptic_audit.json")
+    assert state["convergence_summary_path"].endswith("convergence_summary.json")
+    assert state["project_memory_path"].endswith("PROJECT.md")
+    assert state["requirements_memory_path"].endswith("REQUIREMENTS.md")
+    assert state["state_memory_path"].endswith("STATE.md")
+    assert state["phase_checkpoint"] == "approval_ready"
+
+
+def test_planning_phase_advance_rejects_incomplete_discuss_outputs():
+    planning_lib = _load_planning_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state = _rebase_planning_state_paths(
+            planning_lib.build_planning_state("Plan a gated workflow"),
+            tmpdir,
+        )
+        planning_lib.initialize_planning_artifacts(state)
+
+        try:
+            planning_lib.advance_planning_phase(state, target_status="discovery")
+        except ValueError as exc:
+            assert "cannot advance planning phase from `discuss`" in str(exc)
+            assert "context.goal" in str(exc)
+        else:
+            raise AssertionError("expected discuss phase advancement to reject incomplete artifacts")
+
+
+def test_planning_phase_advance_accepts_repaired_discuss_outputs():
+    planning_lib = _load_planning_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state = _rebase_planning_state_paths(
+            planning_lib.build_planning_state("Plan a gated workflow"),
+            tmpdir,
+        )
+        planning_lib.initialize_planning_artifacts(state)
+        _write_supporting_planning_artifacts(
+            state,
+            active_initiative="Produce an approval-ready plan.",
+        )
+
+        advanced_state = planning_lib.advance_planning_phase(state, target_status="discovery")
+
+    assert advanced_state["status"] == "discovery"
+    assert advanced_state["phase_checkpoint"] == "discovery"
+
+
+def test_blocked_planning_phase_stays_blocked_until_artifacts_are_repaired():
+    planning_lib = _load_planning_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state = _rebase_planning_state_paths(
+            planning_lib.set_planning_status(
+                planning_lib.build_planning_state("Repair blocked planning"),
+                "blocked",
+            ),
+            tmpdir,
+        )
+        planning_lib.initialize_planning_artifacts(state)
+
+        try:
+            planning_lib.advance_planning_phase(state, target_status="discovery")
+        except ValueError as exc:
+            assert "cannot advance planning phase from `discuss`" in str(exc)
+        else:
+            raise AssertionError("expected blocked planning to remain blocked without repaired artifacts")
+
+        _write_supporting_planning_artifacts(
+            state,
+            active_initiative="Produce an approval-ready plan.",
+        )
+        advanced_state = planning_lib.advance_planning_phase(state, target_status="discovery")
+
+    assert advanced_state["status"] == "discovery"
+    assert advanced_state["phase_checkpoint"] == "discovery"
 
 
 def test_example_plan_builds_valid_state():
@@ -216,6 +450,18 @@ def test_example_plan_builds_valid_state():
     assert state["steps"][0]["status"] == "implementing"
     assert state["steps"][1]["status"] == "pending"
     assert state["steps"][1]["commit_message"] == "feature: land the follow-up slice"
+    assert state["steps"][0]["files_read_first"] == [
+        "app/example/module.py",
+        "tests/example/test_module.py",
+    ]
+    assert state["steps"][0]["risk_flags"] == ["Consumer behavior must remain stable for current callers."]
+    assert state["steps"][0]["decision_ids"] == ["D-EXAMPLE-STEP-1"]
+    assert state["steps"][0]["wave"] == 1
+    assert state["steps"][1]["depends_on"] == ["step-1"]
+    assert state["steps"][1]["file_ownership"] == [
+        "app/example/second_module.py",
+        "tests/example/test_second_module.py",
+    ]
 
 
 def test_plan_inference_adds_relevant_agents_paths():
@@ -269,6 +515,28 @@ def test_review_pending_step_blocks_for_review_gate():
     assert "code_review.md" in decision.prompt
     assert "python3 .codex/workflow/scripts/workflow_state.py set-step-status step-1 commit_pending" in decision.prompt
     assert "set-step-status step-1 commit_pending" in decision.prompt
+
+
+def test_activation_prompt_renders_execution_handoff_fields():
+    workflow_lib = _load_workflow_lib()
+    state = workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md")
+
+    prompt = workflow_lib.activation_prompt(state)
+
+    assert "Justification:\nThis keeps the change isolated to the embedding service." in prompt
+    assert "Files to read first:\n- app/ai/embedding/service.py" in prompt
+    assert "Interfaces to preserve:\n- Embedding service public behavior" in prompt
+    assert "Avoid touching:\n- app/api/embedding.py" in prompt
+    assert "Verification targets:\n- tests/ai/test_embedding_service.py" in prompt
+    assert "Risk flags:\n- Preserve existing embedding output shape for current consumers." in prompt
+    assert "Blast radius:\n- app/ai/embedding/service.py consumers" in prompt
+    assert "Decision IDs:\n- D-EMBED-1" in prompt
+    assert "Wave:\n1" in prompt
+    assert "Depends on:\n- none" not in prompt
+    assert "Owned files:\n- app/ai/embedding/service.py" in prompt
+    assert "Rollback notes:\n- Revert the embedding behavior commit if current consumers regress." in prompt
+    assert "Operational watchpoints:\n- Watch the embedding service public behavior contract during verification." in prompt
+    assert "Update `STATE.md`" in prompt
 
 
 def test_final_committed_step_enters_ship_pending_mode():
@@ -408,6 +676,9 @@ def test_workflow_router_start_planning_creates_artifacts():
         context_exists = Path(state["context_path"]).exists()
         scope_exists = Path(state["scope_contract_path"]).exists()
         architecture_exists = Path(state["architecture_constraints_path"]).exists()
+        project_memory_exists = Path(state["project_memory_path"]).exists()
+        requirements_memory_exists = Path(state["requirements_memory_path"]).exists()
+        state_memory_exists = Path(state["state_memory_path"]).exists()
 
     assert response.status == "ok"
     assert response.mode == "planning"
@@ -415,6 +686,9 @@ def test_workflow_router_start_planning_creates_artifacts():
     assert context_exists is True
     assert scope_exists is True
     assert architecture_exists is True
+    assert project_memory_exists is True
+    assert requirements_memory_exists is True
+    assert state_memory_exists is True
 
 
 def test_workflow_router_resume_advances_execution_state():
@@ -469,7 +743,7 @@ def test_workflow_skill_is_scaffolded():
     skill_text = WORKFLOW_SKILL_PATH.read_text(encoding="utf-8")
     metadata_text = WORKFLOW_SKILL_OPENAI_PATH.read_text(encoding="utf-8")
 
-    assert "python3 scripts/workflow_router.py planning-start" in skill_text
+    assert "python3 .agents/skills/workflow/scripts/workflow_router.py planning-start" in skill_text
     assert ".codex/workflow/scripts/workflow_router.py" not in skill_text
     assert "Use $workflow" in metadata_text
 
@@ -477,7 +751,7 @@ def test_workflow_skill_is_scaffolded():
 def test_ship_skill_uses_bundled_workflow_state_wrapper():
     skill_text = SHIP_SKILL_PATH.read_text(encoding="utf-8")
 
-    assert "python3 scripts/workflow_state.py set-step-status" in skill_text
+    assert "python3 .agents/skills/ship/scripts/workflow_state.py set-step-status" in skill_text
     assert ".codex/workflow/scripts/workflow_state.py" not in skill_text
 
 
@@ -542,6 +816,20 @@ def test_planning_prompt_uses_repo_local_planning_state_cli_by_default():
     prompt = planning_lib.planning_activation_prompt(state)
 
     assert "python3 .codex/workflow/scripts/planning_state.py audit-plan" in prompt
+    assert "python3 .codex/workflow/scripts/planning_state.py advance discovery" in prompt
+
+
+def test_compare_plan_cli_defaults_work_in_standalone_repo():
+    result = subprocess.run(
+        [sys.executable, str(PLANNING_STATE_SKILL_SCRIPT_PATH), "compare-plan"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Plan comparison:" in result.stdout
 
 
 def test_plugin_manifest_does_not_claim_hook_bundling():
@@ -562,7 +850,13 @@ def test_planning_artifacts_are_initialized():
         state["discovery_dossier_path"] = str(Path(tmpdir) / "discovery_dossier.json")
         state["scope_contract_path"] = str(Path(tmpdir) / "scope_contract.json")
         state["architecture_constraints_path"] = str(Path(tmpdir) / "architecture_constraints.json")
+        state["product_scope_audit_path"] = str(Path(tmpdir) / "product_scope_audit.json")
+        state["skeptic_audit_path"] = str(Path(tmpdir) / "skeptic_audit.json")
+        state["convergence_summary_path"] = str(Path(tmpdir) / "convergence_summary.json")
         state["planning_trace_path"] = str(Path(tmpdir) / "planning_trace.json")
+        state["project_memory_path"] = str(Path(tmpdir) / "PROJECT.md")
+        state["requirements_memory_path"] = str(Path(tmpdir) / "REQUIREMENTS.md")
+        state["state_memory_path"] = str(Path(tmpdir) / "STATE.md")
 
         planning_lib.save_planning_state(state, planning_state_path)
         planning_lib.initialize_planning_artifacts(state)
@@ -573,7 +867,17 @@ def test_planning_artifacts_are_initialized():
         architecture_constraints = json.loads(
             Path(state["architecture_constraints_path"]).read_text(encoding="utf-8")
         )
+        product_scope_audit = json.loads(
+            Path(state["product_scope_audit_path"]).read_text(encoding="utf-8")
+        )
+        skeptic_audit = json.loads(Path(state["skeptic_audit_path"]).read_text(encoding="utf-8"))
+        convergence_summary = json.loads(
+            Path(state["convergence_summary_path"]).read_text(encoding="utf-8")
+        )
         trace = json.loads(Path(state["planning_trace_path"]).read_text(encoding="utf-8"))
+        project_memory = Path(state["project_memory_path"]).read_text(encoding="utf-8")
+        requirements_memory = Path(state["requirements_memory_path"]).read_text(encoding="utf-8")
+        state_memory = Path(state["state_memory_path"]).read_text(encoding="utf-8")
 
     assert context["feature_request"] == "Add a planning workflow"
     assert context["goal"] == ""
@@ -581,13 +885,21 @@ def test_planning_artifacts_are_initialized():
     assert discovery["current"]["entry_points"] == []
     assert scope_contract["must_have"] == []
     assert architecture_constraints["required_reuse"] == []
+    assert product_scope_audit["recommendation"] == "pending"
+    assert skeptic_audit["recommendation"] == "pending"
+    assert convergence_summary["approval_summary"] == ""
     assert trace["events"][0]["event"] == "planning_started"
+    assert "## Product Intent" in project_memory
+    assert "## Deferred Scope" in requirements_memory
+    assert "## Active Initiative" in state_memory
 
 
 def test_approve_planning_ingests_execution_state():
     planning_lib = _load_planning_lib()
-    state = planning_lib.build_planning_state("Ship the example plan")
-    state["status"] = "approval_ready"
+    state = planning_lib.set_planning_status(
+        planning_lib.build_planning_state("Ship the example plan"),
+        "approval_ready",
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         planning_state_path = Path(tmpdir) / "planning_state.json"
@@ -597,7 +909,13 @@ def test_approve_planning_ingests_execution_state():
         discovery_dossier_path = Path(tmpdir) / "discovery_dossier.json"
         scope_contract_path = Path(tmpdir) / "scope_contract.json"
         architecture_constraints_path = Path(tmpdir) / "architecture_constraints.json"
+        product_scope_audit_path = Path(tmpdir) / "product_scope_audit.json"
+        skeptic_audit_path = Path(tmpdir) / "skeptic_audit.json"
+        convergence_summary_path = Path(tmpdir) / "convergence_summary.json"
         planning_trace_path = Path(tmpdir) / "planning_trace.json"
+        project_memory_path = Path(tmpdir) / "PROJECT.md"
+        requirements_memory_path = Path(tmpdir) / "REQUIREMENTS.md"
+        state_memory_path = Path(tmpdir) / "STATE.md"
 
         approved_plan_path.write_text(PLAN_EXAMPLE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
         state["approved_plan_path"] = str(approved_plan_path)
@@ -605,7 +923,13 @@ def test_approve_planning_ingests_execution_state():
         state["discovery_dossier_path"] = str(discovery_dossier_path)
         state["scope_contract_path"] = str(scope_contract_path)
         state["architecture_constraints_path"] = str(architecture_constraints_path)
+        state["product_scope_audit_path"] = str(product_scope_audit_path)
+        state["skeptic_audit_path"] = str(skeptic_audit_path)
+        state["convergence_summary_path"] = str(convergence_summary_path)
         state["planning_trace_path"] = str(planning_trace_path)
+        state["project_memory_path"] = str(project_memory_path)
+        state["requirements_memory_path"] = str(requirements_memory_path)
+        state["state_memory_path"] = str(state_memory_path)
 
         planning_lib.save_planning_state(state, planning_state_path)
         planning_lib.initialize_planning_artifacts(state)
@@ -615,6 +939,7 @@ def test_approve_planning_ingests_execution_state():
                 "Example module public behavior contract",
                 "Second example module public behavior contract",
             ],
+            active_initiative="Deliver the example feature as two approval-ready, commit-worthy slices.",
         )
 
         execution_state = planning_lib.approve_planning(
@@ -674,6 +999,24 @@ def test_planning_audit_requires_direct_consumer_tests_for_compatibility_steps()
                 "interfaces_to_preserve": ["Current enrichment consumer interface"],
                 "avoid_touching": ["app/orchestrators/single_enrichment.py"],
                 "verification_targets": ["tests/e2e/test_enrichment_flow.py"],
+                "risk_flags": ["Preserve the current enrichment consumer interface."],
+                "blast_radius": [
+                    "app/api/ai_enrichment.py consumers",
+                    "app/orchestrators/batch_enrichment.py consumers",
+                    "app/orchestrators/filter_batch.py consumers",
+                ],
+                "decision_ids": ["D-COMPAT-1"],
+                "depends_on": [],
+                "wave": 1,
+                "file_ownership": [
+                    "app/api/ai_enrichment.py",
+                    "app/orchestrators/batch_enrichment.py",
+                    "app/orchestrators/filter_batch.py",
+                ],
+                "rollback_notes": ["Revert the compatibility step if any consumer contract regresses."],
+                "operational_watchpoints": [
+                    "Watch direct enrichment consumer tests while the refactor lands."
+                ],
                 "done_when": ["Existing consumers remain compatible."],
                 "verify_cmds": ["uv run pytest tests/e2e/test_enrichment_flow.py"],
                 "commit_message": "refactor: preserve consumer compatibility",
@@ -711,6 +1054,13 @@ def test_planning_audit_requires_direct_consumer_tests_for_compatibility_steps()
         discovery_dossier_path = Path(tmpdir) / "discovery_dossier.json"
         scope_contract_path = Path(tmpdir) / "scope_contract.json"
         architecture_constraints_path = Path(tmpdir) / "architecture_constraints.json"
+        product_scope_audit_path = Path(tmpdir) / "product_scope_audit.json"
+        skeptic_audit_path = Path(tmpdir) / "skeptic_audit.json"
+        convergence_summary_path = Path(tmpdir) / "convergence_summary.json"
+        planning_trace_path = Path(tmpdir) / "planning_trace.json"
+        project_memory_path = Path(tmpdir) / "PROJECT.md"
+        requirements_memory_path = Path(tmpdir) / "REQUIREMENTS.md"
+        state_memory_path = Path(tmpdir) / "STATE.md"
 
         approved_plan_path.write_text(json.dumps(approved_plan), encoding="utf-8")
         discovery_dossier_path.write_text(json.dumps(discovery_dossier), encoding="utf-8")
@@ -719,9 +1069,17 @@ def test_planning_audit_requires_direct_consumer_tests_for_compatibility_steps()
         state["discovery_dossier_path"] = str(discovery_dossier_path)
         state["scope_contract_path"] = str(scope_contract_path)
         state["architecture_constraints_path"] = str(architecture_constraints_path)
+        state["product_scope_audit_path"] = str(product_scope_audit_path)
+        state["skeptic_audit_path"] = str(skeptic_audit_path)
+        state["convergence_summary_path"] = str(convergence_summary_path)
+        state["planning_trace_path"] = str(planning_trace_path)
+        state["project_memory_path"] = str(project_memory_path)
+        state["requirements_memory_path"] = str(requirements_memory_path)
+        state["state_memory_path"] = str(state_memory_path)
         _write_supporting_planning_artifacts(
             state,
             preserved_interfaces=["Current enrichment consumer interface"],
+            active_initiative="Keep the existing enrichment consumers compatible during a refactor.",
         )
 
         issues = planning_lib.audit_planning_artifacts(state)
@@ -733,8 +1091,10 @@ def test_planning_audit_requires_direct_consumer_tests_for_compatibility_steps()
 
 def test_approve_planning_rejects_underverified_compatibility_plan():
     planning_lib = _load_planning_lib()
-    state = planning_lib.build_planning_state("Preserve compatibility for enrichment consumers")
-    state["status"] = "approval_ready"
+    state = planning_lib.set_planning_status(
+        planning_lib.build_planning_state("Preserve compatibility for enrichment consumers"),
+        "approval_ready",
+    )
 
     approved_plan = {
         "workflow_name": "Compatibility coverage",
@@ -776,6 +1136,24 @@ def test_approve_planning_rejects_underverified_compatibility_plan():
                 "interfaces_to_preserve": ["Current enrichment consumer interface"],
                 "avoid_touching": ["app/orchestrators/single_enrichment.py"],
                 "verification_targets": ["tests/e2e/test_enrichment_flow.py"],
+                "risk_flags": ["Preserve the current enrichment consumer interface."],
+                "blast_radius": [
+                    "app/api/ai_enrichment.py consumers",
+                    "app/orchestrators/batch_enrichment.py consumers",
+                    "app/orchestrators/filter_batch.py consumers",
+                ],
+                "decision_ids": ["D-COMPAT-1"],
+                "depends_on": [],
+                "wave": 1,
+                "file_ownership": [
+                    "app/api/ai_enrichment.py",
+                    "app/orchestrators/batch_enrichment.py",
+                    "app/orchestrators/filter_batch.py",
+                ],
+                "rollback_notes": ["Revert the compatibility step if any consumer contract regresses."],
+                "operational_watchpoints": [
+                    "Watch direct enrichment consumer tests while the refactor lands."
+                ],
                 "done_when": ["Existing consumers remain compatible."],
                 "verify_cmds": ["uv run pytest tests/e2e/test_enrichment_flow.py"],
                 "commit_message": "refactor: preserve consumer compatibility",
@@ -811,7 +1189,13 @@ def test_approve_planning_rejects_underverified_compatibility_plan():
         discovery_dossier_path = Path(tmpdir) / "discovery_dossier.json"
         scope_contract_path = Path(tmpdir) / "scope_contract.json"
         architecture_constraints_path = Path(tmpdir) / "architecture_constraints.json"
+        product_scope_audit_path = Path(tmpdir) / "product_scope_audit.json"
+        skeptic_audit_path = Path(tmpdir) / "skeptic_audit.json"
+        convergence_summary_path = Path(tmpdir) / "convergence_summary.json"
         planning_trace_path = Path(tmpdir) / "planning_trace.json"
+        project_memory_path = Path(tmpdir) / "PROJECT.md"
+        requirements_memory_path = Path(tmpdir) / "REQUIREMENTS.md"
+        state_memory_path = Path(tmpdir) / "STATE.md"
 
         approved_plan_path.write_text(json.dumps(approved_plan), encoding="utf-8")
         discovery_dossier_path.write_text(json.dumps(discovery_dossier), encoding="utf-8")
@@ -820,7 +1204,13 @@ def test_approve_planning_rejects_underverified_compatibility_plan():
         state["discovery_dossier_path"] = str(discovery_dossier_path)
         state["scope_contract_path"] = str(scope_contract_path)
         state["architecture_constraints_path"] = str(architecture_constraints_path)
+        state["product_scope_audit_path"] = str(product_scope_audit_path)
+        state["skeptic_audit_path"] = str(skeptic_audit_path)
+        state["convergence_summary_path"] = str(convergence_summary_path)
         state["planning_trace_path"] = str(planning_trace_path)
+        state["project_memory_path"] = str(project_memory_path)
+        state["requirements_memory_path"] = str(requirements_memory_path)
+        state["state_memory_path"] = str(state_memory_path)
 
         planning_lib.save_planning_state(state, planning_state_path)
         planning_lib.initialize_planning_artifacts(state)
@@ -828,6 +1218,7 @@ def test_approve_planning_rejects_underverified_compatibility_plan():
         _write_supporting_planning_artifacts(
             state,
             preserved_interfaces=["Current enrichment consumer interface"],
+            active_initiative="Keep the existing enrichment consumers compatible during a refactor.",
         )
 
         try:
@@ -843,6 +1234,95 @@ def test_approve_planning_rejects_underverified_compatibility_plan():
             raise AssertionError("expected approve_planning to reject under-verified compatibility plan")
 
 
+def test_convergence_cannot_advance_to_approval_ready_while_audit_is_dirty():
+    planning_lib = _load_planning_lib()
+    state = planning_lib.set_planning_status(
+        planning_lib.build_planning_state("Guard the final approval gate"),
+        "convergence",
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state = _rebase_planning_state_paths(state, tmpdir)
+        approved_plan_path = Path(state["approved_plan_path"])
+        approved_plan_path.write_text(json.dumps(_example_plan()), encoding="utf-8")
+        planning_lib.initialize_planning_artifacts(state)
+        Path(state["discovery_dossier_path"]).write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "feature_request": state["feature_request"],
+                    "current": {
+                        "requirements": ["Update the embedding behavior."],
+                        "anti_goals": [],
+                        "success_criteria": ["The embedding flow uses the updated behavior."],
+                        "entry_points": ["app/ai/embedding/service.py"],
+                        "blast_radius": ["Embedding service consumers depend on the current output shape."],
+                        "pattern_anchors": [],
+                        "verification_anchors": ["tests/ai/test_embedding_service.py"],
+                        "open_questions": [],
+                        "complexity_events": [],
+                    },
+                    "supplements": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        _write_supporting_planning_artifacts(
+            state,
+            preserved_interfaces=["Embedding service public behavior"],
+            active_initiative="A different initiative that should fail the memory audit.",
+        )
+
+        try:
+            planning_lib.advance_planning_phase(state, target_status="approval_ready")
+        except ValueError as exc:
+            assert "STATE.md" in str(exc)
+        else:
+            raise AssertionError("expected approval_ready advancement to enforce the final audit gate")
+
+
+def test_repo_memory_drift_detection_flags_deferred_scope_leaks():
+    planning_lib = _load_planning_lib()
+    state = planning_lib.build_planning_state("Protect repo memory from drift")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state = _rebase_planning_state_paths(state, tmpdir)
+        approved_plan_path = Path(state["approved_plan_path"])
+        approved_plan_path.write_text(json.dumps(_example_plan()), encoding="utf-8")
+        Path(state["discovery_dossier_path"]).write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "feature_request": state["feature_request"],
+                    "current": {
+                        "requirements": ["Update the embedding behavior."],
+                        "anti_goals": [],
+                        "success_criteria": ["The embedding flow uses the updated behavior."],
+                        "entry_points": ["app/ai/embedding/service.py"],
+                        "blast_radius": ["Embedding service consumers depend on the current output shape."],
+                        "pattern_anchors": [],
+                        "verification_anchors": ["tests/ai/test_embedding_service.py"],
+                        "open_questions": [],
+                        "complexity_events": [],
+                    },
+                    "supplements": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        _write_supporting_planning_artifacts(
+            state,
+            preserved_interfaces=["Embedding service public behavior"],
+            deferred=["embedding behavior"],
+            active_initiative="Update the embedding flow in one verified step.",
+        )
+
+        issues = planning_lib.audit_planning_artifacts(state)
+
+    assert any("REQUIREMENTS.md" in issue for issue in issues)
+    assert any("embedding behavior" in issue for issue in issues)
+
+
 def test_compare_plan_specs_reports_stronger_candidate():
     planning_lib = _load_planning_lib()
     baseline = _example_plan()
@@ -852,6 +1332,10 @@ def test_compare_plan_specs_reports_stronger_candidate():
         "interfaces_to_preserve",
         "avoid_touching",
         "verification_targets",
+        "wave",
+        "file_ownership",
+        "rollback_notes",
+        "operational_watchpoints",
     ):
         baseline["steps"][0].pop(field_name, None)
     candidate = deepcopy(baseline)
@@ -863,6 +1347,17 @@ def test_compare_plan_specs_reports_stronger_candidate():
         "tests/ai/test_embedding_service.py",
         "tests/ai/test_embedding_contract.py",
     ]
+    candidate["steps"][0]["wave"] = 1
+    candidate["steps"][0]["file_ownership"] = [
+        "app/ai/embedding/service.py",
+        "tests/ai/test_embedding_service.py",
+    ]
+    candidate["steps"][0]["rollback_notes"] = [
+        "Revert the embedding step if the consumer contract regresses.",
+    ]
+    candidate["steps"][0]["operational_watchpoints"] = [
+        "Watch the embedding service contract during verification.",
+    ]
     candidate["steps"][0]["done_when"].append("Targeted regression coverage proves the contract did not drift.")
     candidate["steps"][0]["verify_cmds"].append("uv run pytest tests/ai/test_embedding_contract.py")
 
@@ -873,6 +1368,8 @@ def test_compare_plan_specs_reports_stronger_candidate():
     assert any("read-first handoff coverage" in item for item in comparison["improved"])
     assert any("completion detail per step" in item for item in comparison["improved"])
     assert any("verification target breadth" in item for item in comparison["improved"])
+    assert any("file ownership coverage" in item for item in comparison["improved"])
+    assert any("rollback note coverage" in item for item in comparison["improved"])
 
 
 def test_render_plan_comparison_includes_verdict_and_metric_changes():
@@ -892,6 +1389,46 @@ def test_render_plan_comparison_includes_verdict_and_metric_changes():
     assert "Plan comparison: `baseline.json` -> `candidate.json`" in rendered
     assert "Verdict: stronger" in rendered
     assert "missing justifications" in rendered
+
+
+def test_evaluate_plan_spec_flags_dependency_cycles_and_wave_errors():
+    planning_lib = _load_planning_lib()
+    plan = json.loads(PLAN_EXAMPLE_PATH.read_text(encoding="utf-8"))
+    plan["steps"][0]["depends_on"] = ["step-2"]
+    plan["steps"][0]["wave"] = 2
+    plan["steps"][1]["depends_on"] = ["step-1"]
+    plan["steps"][1]["wave"] = 2
+
+    evaluation = planning_lib.evaluate_plan_spec(plan)
+
+    assert any("dependency cycle detected" in item for item in evaluation["warnings"])
+    assert any("must be greater than dependency" in item for item in evaluation["warnings"])
+
+
+def test_evaluate_plan_spec_flags_parallel_file_ownership_conflicts():
+    planning_lib = _load_planning_lib()
+    plan = json.loads(PLAN_EXAMPLE_PATH.read_text(encoding="utf-8"))
+    plan["steps"][1]["wave"] = 1
+    plan["steps"][1]["file_ownership"] = [
+        "app/example/module.py",
+        "tests/example/test_second_module.py",
+    ]
+
+    evaluation = planning_lib.evaluate_plan_spec(plan)
+
+    assert any("conflicting file ownership" in item for item in evaluation["warnings"])
+
+
+def test_evaluate_plan_spec_flags_missing_rollback_and_watchpoints_for_risky_steps():
+    planning_lib = _load_planning_lib()
+    plan = _example_plan()
+    plan["steps"][0].pop("rollback_notes")
+    plan["steps"][0].pop("operational_watchpoints")
+
+    evaluation = planning_lib.evaluate_plan_spec(plan)
+
+    assert any("missing rollback_notes" in item for item in evaluation["warnings"])
+    assert any("missing operational_watchpoints" in item for item in evaluation["warnings"])
 
 
 def test_user_prompt_hook_ignores_normal_prompts():
