@@ -2,12 +2,72 @@
 
 Discuss-first planning and stepwise execution workflow for Codex.
 
+## Development Status
+
+This repo is still in active development. The plugin is usable, but the workflow contract is still evolving and breaking changes are expected while the planning and execution model is being hardened.
+
+Rough phase-completion estimates:
+
+| Phase | Status |
+| --- | --- |
+| Discuss / context | 70% |
+| Planning | 60% |
+| Execution / development | 55% |
+| Review gate | 65% |
+| Shipping | 60% |
+| UAT / gap closure | 0% |
+| Plugin packaging | 70% |
+
 ## What lives here
 
+- `.codex-plugin/plugin.json`: Codex plugin manifest
 - `.codex/workflow/`: workflow engine, schemas, examples, notes
 - `.agents/skills/workflow/`: native `$workflow` skill
 - `.agents/skills/ship/`: ship skill used by the execution flow
 - `tests/scripts/test_codex_workflow.py`: workflow regression tests
+
+## Current plugin surface
+
+The plugin currently exposes:
+
+- `$workflow` for planning, resume, approval, status, cancel, and execution activation
+- `$ship` for the publish phase after the workflow reaches ship readiness
+
+The legacy `/workflow ...` trigger is still available through `.codex/hooks.json`, but `$workflow` is the intended interface.
+
+## Installation
+
+This repo now works as a Codex plugin. The simplest local install path is to keep the repo at `~/plugins/lateralus-workflow` so the marketplace entry stays standard.
+
+1. Clone the repo into `~/plugins/lateralus-workflow`.
+2. Add an entry to `~/.agents/plugins/marketplace.json` like this:
+
+```json
+{
+  "name": "local-plugins",
+  "interface": {
+    "displayName": "Local Plugins"
+  },
+  "plugins": [
+    {
+      "name": "lateralus-workflow",
+      "source": {
+        "source": "local",
+        "path": "./plugins/lateralus-workflow"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
+```
+
+3. Restart Codex and open `/plugins`.
+4. Install `Lateralus Workflow`.
+5. Start using `$workflow`.
 
 ## Core entrypoints
 
@@ -19,15 +79,11 @@ Discuss-first planning and stepwise execution workflow for Codex.
   - `python3 .codex/workflow/scripts/workflow_router.py cancel`
   - `python3 .codex/workflow/scripts/workflow_router.py execution-start [plan-file]`
 
-## Legacy compatibility
-
-- `.codex/hooks.json` preserves the old `/workflow ...` hook path.
-- `$workflow` is the intended interface going forward.
-
 ## Development
 
 - Install dev dependencies: `uv sync --dev`
 - Run workflow tests: `uv run pytest tests/scripts/test_codex_workflow.py`
+- Validate the plugin manifest JSON: `python3 -m json.tool .codex-plugin/plugin.json`
 
 ## Notes
 
