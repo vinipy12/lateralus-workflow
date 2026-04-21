@@ -1,0 +1,38 @@
+{
+  "name": "lateralus-workflow",
+  "version": "0.1.0",
+  "description": "Discuss-first planning and stepwise execution workflow for Codex.",
+  "author": {
+    "name": "Lateralus AI",
+    "url": "https://github.com/vinipy12"
+  },
+  "homepage": "https://github.com/vinipy12/lateralus-workflow",
+  "repository": "https://github.com/vinipy12/lateralus-workflow",
+  "license": "UNLICENSED",
+  "keywords": [
+    "codex",
+    "workflow",
+    "planning",
+    "review",
+    "shipping"
+  ],
+  "skills": "./.agents/skills/",
+  "interface": {
+    "displayName": "Lateralus Workflow",
+    "shortDescription": "Discuss-first workflow for Codex",
+    "longDescription": "Development-preview Codex plugin for discuss-first planning, execution, review gates, and shipping workflows.",
+    "developerName": "Lateralus AI",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/vinipy12/lateralus-workflow",
+    "defaultPrompt": [
+      "Start a discuss-first plan for this feature with $workflow.",
+      "Resume the active workflow and tell me the next required step.",
+      "Approve the current plan and move it into execution."
+    ],
+    "brandColor": "#1F2937"
+  }
+}

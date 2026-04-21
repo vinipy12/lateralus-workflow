@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,7 +15,12 @@ DEFAULT_STATE_PATH = WORKFLOW_DIR / "state.json"
 STATE_EXAMPLE_PATH = WORKFLOW_DIR / "state.example.json"
 STATE_SCHEMA_PATH = WORKFLOW_DIR / "state.schema.json"
 PLAN_SCHEMA_PATH = WORKFLOW_DIR / "plan.schema.json"
-STATE_TOOL_COMMAND = "python3 .codex/workflow/scripts/workflow_state.py"
+SKILL_SCRIPTS_DIR = os.environ.get("LATERALUS_WORKFLOW_SKILL_SCRIPTS_DIR")
+STATE_TOOL_COMMAND = (
+    f"python3 {shlex.quote(str(Path(SKILL_SCRIPTS_DIR) / 'workflow_state.py'))}"
+    if SKILL_SCRIPTS_DIR
+    else "python3 .codex/workflow/scripts/workflow_state.py"
+)
 DEFAULT_REVIEW_PATH = "code_review.md"
 DEFAULT_SHIP_SKILL = "ship"
 DEFAULT_BASE_BRANCH = "origin/main"
