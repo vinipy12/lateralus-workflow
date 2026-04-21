@@ -19,6 +19,7 @@ PLANNING_STATE_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "planning_stat
 PLAN_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "plan.example.json"
 WORKFLOW_SKILL_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "SKILL.md"
 WORKFLOW_SKILL_OPENAI_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "agents" / "openai.yaml"
+PLUGIN_MANIFEST_PATH = REPO_ROOT / ".codex-plugin" / "plugin.json"
 
 
 if str(WORKFLOW_SCRIPTS_DIR) not in sys.path:
@@ -458,6 +459,13 @@ def test_workflow_skill_is_scaffolded():
 
     assert "python3 .codex/workflow/scripts/workflow_router.py planning-start" in skill_text
     assert "Use $workflow" in metadata_text
+
+
+def test_plugin_manifest_does_not_claim_hook_bundling():
+    manifest = json.loads(PLUGIN_MANIFEST_PATH.read_text(encoding="utf-8"))
+
+    assert manifest["skills"] == "./.agents/skills/"
+    assert "hooks" not in manifest
 
 
 def test_planning_artifacts_are_initialized():

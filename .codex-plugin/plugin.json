@@ -17,7 +17,6 @@
     "shipping"
   ],
   "skills": "./.agents/skills/",
-  "hooks": "./.codex/hooks.json",
   "interface": {
     "displayName": "Lateralus Workflow",
     "shortDescription": "Discuss-first workflow for Codex",

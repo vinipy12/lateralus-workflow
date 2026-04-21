@@ -32,8 +32,9 @@ The plugin currently exposes:
 
 - `$workflow` for planning, resume, approval, status, cancel, and execution activation
 - `$ship` for the publish phase after the workflow reaches ship readiness
+- repo-local legacy `/workflow ...` hooks defined in `.codex/hooks.json`
 
-The legacy `/workflow ...` trigger is still available through `.codex/hooks.json`, but `$workflow` is the intended interface.
+Installing the plugin does not activate `.codex/hooks.json`; users who want the legacy `/workflow ...` trigger must wire those hooks into their own Codex config separately. `$workflow` remains the intended interface.
 
 ## Installation
 
