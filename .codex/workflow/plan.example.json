@@ -64,6 +64,28 @@
       "verification_targets": [
         "tests/example/test_module.py"
       ],
+      "risk_flags": [
+        "Consumer behavior must remain stable for current callers."
+      ],
+      "blast_radius": [
+        "app/example/module.py consumers",
+        "tests/example/test_module.py"
+      ],
+      "decision_ids": [
+        "D-EXAMPLE-STEP-1"
+      ],
+      "depends_on": [],
+      "wave": 1,
+      "file_ownership": [
+        "app/example/module.py",
+        "tests/example/test_module.py"
+      ],
+      "rollback_notes": [
+        "Revert the step 1 commit if the first verified slice regresses current callers."
+      ],
+      "operational_watchpoints": [
+        "Watch the example module public behavior contract during review and verification."
+      ],
       "done_when": [
         "The behavior works.",
         "The targeted test passes."
@@ -106,6 +128,29 @@
       ],
       "verification_targets": [
         "tests/example/test_second_module.py"
+      ],
+      "risk_flags": [
+        "Step 1 behavior must remain intact after the follow-up slice."
+      ],
+      "blast_radius": [
+        "app/example/second_module.py consumers"
+      ],
+      "decision_ids": [
+        "D-EXAMPLE-STEP-2"
+      ],
+      "depends_on": [
+        "step-1"
+      ],
+      "wave": 2,
+      "file_ownership": [
+        "app/example/second_module.py",
+        "tests/example/test_second_module.py"
+      ],
+      "rollback_notes": [
+        "Revert only the step 2 commit if the follow-up slice destabilizes the first slice."
+      ],
+      "operational_watchpoints": [
+        "Watch downstream consumers of the second example module while step 2 lands."
       ],
       "done_when": [
         "The second slice works.",

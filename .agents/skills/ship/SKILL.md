@@ -6,11 +6,12 @@ description: Finish a ready branch by validating the final workflow state, pushi
 # Ship
 
 Use this skill for the final publication phase after all execution steps are committed.
-Use the bundled `scripts/workflow_state.py` wrapper when you need to update repo-local workflow state from an installed plugin.
+Use the repo-local `.agents/skills/ship/scripts/workflow_state.py` wrapper when you need to update workflow state from this checkout.
 
 ## Inputs
 
 - Repo-local workflow state: `.codex/workflow/state.json`
+- Repo-local UAT artifact: `.codex/workflow/uat.json`
 - Base branch: from the workflow state, usually `origin/main`
 - Current branch: resolve from git
 
@@ -18,7 +19,7 @@ Use the bundled `scripts/workflow_state.py` wrapper when you need to update repo
 
 1. Inspect `.codex/workflow/state.json` first.
 2. Confirm the workflow is ready to ship:
-   - `workflow_status` is `ship_pending`, or the user explicitly asked to ship anyway
+   - `workflow_status` is `ship_pending`, which means UAT has already passed, or the user explicitly asked to ship anyway
    - the current step is already `committed`
 3. Review branch state locally:
    - confirm the branch name
@@ -29,8 +30,9 @@ Use the bundled `scripts/workflow_state.py` wrapper when you need to update repo
 6. Prefer GitHub MCP to create the PR and to post a PR comment; fall back to `gh` only if MCP is unavailable.
 7. If `request_codex_review` is `true`, post `@codex review` to the PR after creation.
 8. Mark the workflow complete:
-   - `python3 scripts/workflow_state.py set-step-status <current-step-id> shipped`
-   - `python3 scripts/workflow_state.py set-workflow-status complete`
+   - Update `STATE.md` if shipping changed release state, latest decisions, or unresolved risks.
+   - `python3 .agents/skills/ship/scripts/workflow_state.py set-step-status <current-step-id> shipped`
+   - `python3 .agents/skills/ship/scripts/workflow_state.py set-workflow-status complete`
 
 ## Rules
 

@@ -12,6 +12,8 @@ from typing import Any
 ROOT_DIR = Path(__file__).resolve().parents[3]
 WORKFLOW_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_STATE_PATH = WORKFLOW_DIR / "state.json"
+DEFAULT_UAT_ARTIFACT_PATH = WORKFLOW_DIR / "uat.json"
+DEFAULT_METRICS_DIR = WORKFLOW_DIR / "metrics"
 STATE_EXAMPLE_PATH = WORKFLOW_DIR / "state.example.json"
 STATE_SCHEMA_PATH = WORKFLOW_DIR / "state.schema.json"
 PLAN_SCHEMA_PATH = WORKFLOW_DIR / "plan.schema.json"
@@ -25,7 +27,14 @@ DEFAULT_REVIEW_PATH = "code_review.md"
 DEFAULT_SHIP_SKILL = "ship"
 DEFAULT_BASE_BRANCH = "origin/main"
 
-VALID_WORKFLOW_STATUSES = {"active", "ship_pending", "complete"}
+VALID_WORKFLOW_STATUSES = {
+    "active",
+    "uat_pending",
+    "gap_closure_pending",
+    "replan_required",
+    "ship_pending",
+    "complete",
+}
 VALID_MODES = {"stepwise", "ship"}
 VALID_STEP_STATUSES = {
     "pending",
@@ -36,6 +45,7 @@ VALID_STEP_STATUSES = {
     "committed",
     "shipped",
 }
+VALID_UAT_STATUSES = {"pending", "passed", "failed_gap", "failed_replan"}
 
 
 @dataclass(frozen=True)
@@ -48,6 +58,7 @@ def load_state(path: Path = DEFAULT_STATE_PATH) -> dict[str, Any] | None:
     if not path.exists():
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
+    data = _normalize_state_compat(data, path)
     validate_state(data)
     return data
 
@@ -70,6 +81,8 @@ def validate_state(state: dict[str, Any]) -> None:
         "current_step_id",
         "base_branch",
         "request_codex_review",
+        "uat_artifact_path",
+        "metrics_dir",
         "steps",
     }
     missing = sorted(required_fields - state.keys())
@@ -84,6 +97,12 @@ def validate_state(state: dict[str, Any]) -> None:
         raise ValueError(f"invalid mode: {state['mode']}")
     if not isinstance(state["request_codex_review"], bool):
         raise ValueError("request_codex_review must be a boolean")
+    for field_name in ("workflow_name", "plan_path", "review_path", "ship_skill", "current_step_id", "base_branch"):
+        if not isinstance(state[field_name], str) or not state[field_name].strip():
+            raise ValueError(f"{field_name} must be a non-empty string")
+    for field_name in ("uat_artifact_path", "metrics_dir"):
+        if not isinstance(state[field_name], str) or not state[field_name].strip():
+            raise ValueError(f"{field_name} must be a non-empty string")
 
     steps = state["steps"]
     if not isinstance(steps, list) or not steps:
@@ -128,6 +147,8 @@ def build_state_from_plan_spec(
     base_branch: str = DEFAULT_BASE_BRANCH,
     mode: str = "ship",
     request_codex_review: bool = True,
+    uat_artifact_path: str = ".codex/workflow/uat.json",
+    metrics_dir: str = ".codex/workflow/metrics",
 ) -> dict[str, Any]:
     validate_plan_spec(plan_spec)
 
@@ -158,8 +179,207 @@ def build_state_from_plan_spec(
         "current_step_id": normalized_steps[0]["id"],
         "base_branch": plan_spec.get("base_branch", base_branch),
         "request_codex_review": bool(plan_spec.get("request_codex_review", request_codex_review)),
+        "uat_artifact_path": str(plan_spec.get("uat_artifact_path", uat_artifact_path)),
+        "metrics_dir": str(plan_spec.get("metrics_dir", metrics_dir)),
         "steps": normalized_steps,
     }
+
+
+def load_uat_artifact(path: Path = DEFAULT_UAT_ARTIFACT_PATH) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    validate_uat_artifact(data)
+    return data
+
+
+def save_uat_artifact(artifact: dict[str, Any], path: Path = DEFAULT_UAT_ARTIFACT_PATH) -> None:
+    validate_uat_artifact(artifact)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(artifact, indent=2) + "\n", encoding="utf-8")
+
+
+def validate_uat_artifact(artifact: dict[str, Any]) -> None:
+    required_fields = {
+        "version",
+        "workflow_name",
+        "plan_path",
+        "generated_from",
+        "overall_status",
+        "summary",
+        "checklist",
+    }
+    missing = sorted(required_fields - artifact.keys())
+    if missing:
+        raise ValueError(f"uat artifact missing required fields: {', '.join(missing)}")
+
+    if artifact["version"] != 1:
+        raise ValueError("uat artifact version must be 1")
+    for field_name in ("workflow_name", "plan_path"):
+        if not isinstance(artifact[field_name], str) or not artifact[field_name].strip():
+            raise ValueError(f"{field_name} must be a non-empty string in the uat artifact")
+    if artifact["overall_status"] not in VALID_UAT_STATUSES:
+        raise ValueError(f"invalid uat overall_status: {artifact['overall_status']}")
+    if not isinstance(artifact["summary"], (str, type(None))):
+        raise ValueError("uat summary must be a string or null")
+
+    generated_from = artifact["generated_from"]
+    if not isinstance(generated_from, dict):
+        raise ValueError("uat generated_from must be an object")
+    for field_name in ("project_memory_path", "requirements_memory_path", "state_memory_path"):
+        value = generated_from.get(field_name)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"uat generated_from.{field_name} must be a non-empty string")
+
+    checklist = artifact["checklist"]
+    if not isinstance(checklist, list) or not checklist:
+        raise ValueError("uat checklist must be a non-empty list")
+    seen_ids: set[str] = set()
+    for item in checklist:
+        if not isinstance(item, dict):
+            raise ValueError("uat checklist entries must be objects")
+        required_item_fields = {
+            "id",
+            "title",
+            "requirement_ids",
+            "prompt",
+            "verification_targets",
+            "status",
+        }
+        missing_item_fields = sorted(required_item_fields - item.keys())
+        if missing_item_fields:
+            raise ValueError(
+                "uat checklist entry missing fields: " + ", ".join(missing_item_fields)
+            )
+        item_id = item["id"]
+        if not isinstance(item_id, str) or not item_id.strip():
+            raise ValueError("uat checklist id must be a non-empty string")
+        if item_id in seen_ids:
+            raise ValueError(f"duplicate uat checklist id: {item_id}")
+        seen_ids.add(item_id)
+        for field_name in ("title", "prompt"):
+            value = item[field_name]
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"uat checklist {field_name} must be a non-empty string for {item_id}")
+        if item["status"] not in VALID_UAT_STATUSES:
+            raise ValueError(f"invalid uat checklist status for {item_id}: {item['status']}")
+        for list_name in ("requirement_ids", "verification_targets"):
+            if not isinstance(item[list_name], list):
+                raise ValueError(f"uat checklist {list_name} must be a list for {item_id}")
+            for value in item[list_name]:
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"uat checklist {list_name} must contain non-empty strings for {item_id}")
+
+
+def build_uat_artifact(
+    plan_spec: dict[str, Any],
+    *,
+    workflow_name: str,
+    plan_path: str,
+    project_memory_path: str,
+    requirements_memory_path: str,
+    state_memory_path: str,
+) -> dict[str, Any]:
+    validate_plan_spec(plan_spec)
+    checklist: list[dict[str, Any]] = []
+    steps = [step for step in plan_spec.get("steps", []) if isinstance(step, dict)]
+
+    for requirement in plan_spec.get("requirements", []):
+        requirement_id = str(requirement["id"])
+        matching_steps = [
+            step
+            for step in steps
+            if requirement_id in _ensure_string_list(
+                step.get("requirement_ids", []),
+                field_name=f"requirement_ids for {step.get('id', '<unknown>')}",
+            )
+        ]
+        verification_targets: list[str] = []
+        for step in matching_steps:
+            targets = _ensure_string_list(
+                step.get("verification_targets", []),
+                field_name=f"verification_targets for {step.get('id', '<unknown>')}",
+            )
+            if not targets:
+                targets = _extract_verify_targets(
+                    _ensure_string_list(
+                        step.get("verify_cmds", []),
+                        field_name=f"verify_cmds for {step.get('id', '<unknown>')}",
+                    )
+                )
+            verification_targets.extend(targets)
+        checklist.append(
+            {
+                "id": f"requirement-{requirement_id}",
+                "title": f"{requirement_id}: {requirement['text']}",
+                "requirement_ids": [requirement_id],
+                "prompt": (
+                    f"Confirm that the committed implementation satisfies requirement {requirement_id}: "
+                    f"{requirement['text']}"
+                ),
+                "verification_targets": _unique_preserving_order(verification_targets),
+                "status": "pending",
+            }
+        )
+
+    checklist.append(
+        {
+            "id": "repo-memory-consistency",
+            "title": "Repo memory consistency",
+            "requirement_ids": [],
+            "prompt": (
+                "Confirm the shipped scope and behavior still match durable constraints in PROJECT.md, "
+                "accepted and deferred scope in REQUIREMENTS.md, and the current delivery record in STATE.md."
+            ),
+            "verification_targets": [
+                project_memory_path,
+                requirements_memory_path,
+                state_memory_path,
+            ],
+            "status": "pending",
+        }
+    )
+
+    artifact = {
+        "version": 1,
+        "workflow_name": workflow_name,
+        "plan_path": plan_path,
+        "generated_from": {
+            "project_memory_path": project_memory_path,
+            "requirements_memory_path": requirements_memory_path,
+            "state_memory_path": state_memory_path,
+        },
+        "overall_status": "pending",
+        "summary": None,
+        "checklist": checklist,
+    }
+    validate_uat_artifact(artifact)
+    return artifact
+
+
+def reset_uat_artifact_for_rerun(path: Path) -> dict[str, Any]:
+    artifact = load_uat_artifact(path)
+    if artifact is None:
+        raise ValueError(f"uat artifact not found: {path}")
+    artifact["overall_status"] = "pending"
+    for item in artifact["checklist"]:
+        item["status"] = "pending"
+    save_uat_artifact(artifact, path)
+    return artifact
+
+
+def update_uat_artifact_result(path: Path, status: str, summary: str | None) -> dict[str, Any]:
+    artifact = load_uat_artifact(path)
+    if artifact is None:
+        raise ValueError(f"uat artifact not found: {path}")
+    if status not in {"passed", "failed_gap", "failed_replan"}:
+        raise ValueError(f"invalid uat result: {status}")
+    artifact["overall_status"] = status
+    artifact["summary"] = summary
+    for item in artifact["checklist"]:
+        item["status"] = status
+    save_uat_artifact(artifact, path)
+    return artifact
 
 
 def _validate_step(step: dict[str, Any]) -> None:
@@ -197,6 +417,32 @@ def _validate_step(step: dict[str, Any]) -> None:
         for item in step[list_name]:
             if not isinstance(item, str) or not item.strip():
                 raise ValueError(f"{list_name} must contain non-empty strings for {step['id']}")
+    if "justification" in step and (
+        not isinstance(step["justification"], str) or not step["justification"].strip()
+    ):
+        raise ValueError(f"justification must be a non-empty string for {step['id']}")
+    for list_name in (
+        "files_read_first",
+        "interfaces_to_preserve",
+        "avoid_touching",
+        "verification_targets",
+        "risk_flags",
+        "blast_radius",
+        "decision_ids",
+        "depends_on",
+        "file_ownership",
+        "rollback_notes",
+        "operational_watchpoints",
+    ):
+        if list_name not in step:
+            continue
+        if not isinstance(step[list_name], list):
+            raise ValueError(f"{list_name} must be a list for {step['id']}")
+        for item in step[list_name]:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(f"{list_name} must contain non-empty strings for {step['id']}")
+    if "wave" in step and not _is_positive_int(step["wave"]):
+        raise ValueError(f"wave must be a positive integer for {step['id']}")
 
 
 def _coerce_plan_specs(parsed: Any, source_path: Path) -> list[dict[str, Any]]:
@@ -298,7 +544,7 @@ def _normalize_plan_step(raw_step: dict[str, Any], *, index: int) -> dict[str, A
     if review_summary is not None and not isinstance(review_summary, str):
         raise ValueError(f"review_summary must be a string or null for {step_id}")
 
-    return {
+    normalized_step = {
         "id": step_id,
         "title": title,
         "goal": goal,
@@ -311,6 +557,33 @@ def _normalize_plan_step(raw_step: dict[str, Any], *, index: int) -> dict[str, A
         "status": status,
         "review_summary": review_summary,
     }
+    justification = str(raw_step.get("justification") or "").strip()
+    if justification:
+        normalized_step["justification"] = justification
+
+    for list_name in (
+        "files_read_first",
+        "interfaces_to_preserve",
+        "avoid_touching",
+        "verification_targets",
+        "risk_flags",
+        "blast_radius",
+        "decision_ids",
+        "depends_on",
+        "file_ownership",
+        "rollback_notes",
+        "operational_watchpoints",
+    ):
+        values = _ensure_string_list(raw_step.get(list_name, []), field_name=f"{list_name} for {step_id}")
+        if values:
+            normalized_step[list_name] = values
+    wave = raw_step.get("wave")
+    if wave is not None:
+        if not _is_positive_int(wave):
+            raise ValueError(f"wave must be a positive integer for {step_id}")
+        normalized_step["wave"] = wave
+
+    return normalized_step
 
 
 def validate_plan_spec(plan_spec: dict[str, Any]) -> None:
@@ -457,6 +730,11 @@ def _validate_plan_step(
         "risk_flags",
         "blast_radius",
         "decision_ids",
+        "depends_on",
+        "wave",
+        "file_ownership",
+        "rollback_notes",
+        "operational_watchpoints",
     }
     unknown_fields = sorted(set(step.keys()) - allowed_fields)
     if unknown_fields:
@@ -524,9 +802,15 @@ def _validate_plan_step(
         "risk_flags",
         "blast_radius",
         "decision_ids",
+        "depends_on",
+        "file_ownership",
+        "rollback_notes",
+        "operational_watchpoints",
     ):
         if optional_list_name in step:
             _ensure_string_list(step[optional_list_name], field_name=f"{optional_list_name} for {step_id}")
+    if "wave" in step and not _is_positive_int(step["wave"]):
+        raise ValueError(f"wave must be a positive integer for {step_id}")
 
     return step_id, set(requirement_ids)
 
@@ -563,6 +847,17 @@ def _looks_like_repo_path(value: str) -> bool:
     if not value or any(char.isspace() for char in value):
         return False
     return "/" in value or value.endswith((".py", ".md", ".json", ".yaml", ".yml", ".toml", ".sh"))
+
+
+def _normalize_state_compat(state: Any, path: Path) -> dict[str, Any]:
+    if not isinstance(state, dict):
+        raise ValueError("workflow state must be a JSON object")
+
+    normalized = dict(state)
+    state_root = path.resolve().parent
+    normalized.setdefault("uat_artifact_path", str(state_root / "uat.json"))
+    normalized.setdefault("metrics_dir", str(state_root / "metrics"))
+    return normalized
 
 
 def _ensure_string_list(value: Any, *, field_name: str) -> list[str]:
@@ -610,8 +905,29 @@ def next_stop_decision(state: dict[str, Any]) -> tuple[dict[str, Any], WorkflowD
         state["workflow_status"] = "complete"
         return state, WorkflowDecision(action="noop"), True
 
+    if state["workflow_status"] == "replan_required":
+        return state, WorkflowDecision(action="block", prompt=_replan_required_prompt(state, step)), False
+
     if state["workflow_status"] == "ship_pending":
         return state, WorkflowDecision(action="block", prompt=_ship_prompt(state, step)), False
+
+    if state["workflow_status"] == "uat_pending":
+        return state, WorkflowDecision(action="block", prompt=_uat_prompt(state, step)), False
+
+    if state["workflow_status"] == "gap_closure_pending":
+        if step["status"] == "committed":
+            state["workflow_status"] = "uat_pending"
+            return state, WorkflowDecision(action="block", prompt=_uat_prompt(state, step)), True
+        if step["status"] == "review_pending":
+            return state, WorkflowDecision(action="block", prompt=_review_prompt(state, step)), False
+        if step["status"] == "fix_pending":
+            return state, WorkflowDecision(action="block", prompt=_fix_prompt(state, step)), False
+        if step["status"] == "commit_pending":
+            return state, WorkflowDecision(action="block", prompt=_commit_prompt(state, step)), False
+        if step["status"] == "pending":
+            step["status"] = "implementing"
+            return state, WorkflowDecision(action="block", prompt=_gap_closure_prompt(state, step)), True
+        return state, WorkflowDecision(action="block", prompt=_gap_closure_prompt(state, step)), False
 
     if step["status"] == "pending":
         step["status"] = "implementing"
@@ -638,8 +954,8 @@ def next_stop_decision(state: dict[str, Any]) -> tuple[dict[str, Any], WorkflowD
                 next_step["status"] = "implementing"
             return state, WorkflowDecision(action="block", prompt=_implementation_prompt(state, next_step, is_start=True)), True
         if state["mode"] == "ship":
-            state["workflow_status"] = "ship_pending"
-            return state, WorkflowDecision(action="block", prompt=_ship_prompt(state, step)), True
+            state["workflow_status"] = "uat_pending"
+            return state, WorkflowDecision(action="block", prompt=_uat_prompt(state, step)), True
         state["workflow_status"] = "complete"
         return state, WorkflowDecision(action="noop"), True
 
@@ -659,13 +975,42 @@ def _implementation_prompt(state: dict[str, Any], step: dict[str, Any], *, is_st
     context_lines = _bullets(step["context"])
     constraints_lines = _bullets(step["constraints"])
     done_lines = _bullets(step["done_when"])
+    justification_section = _optional_text_section("Justification", step.get("justification"))
+    files_read_first_section = _optional_bullets("Files to read first", step.get("files_read_first", []))
+    interfaces_section = _optional_bullets("Interfaces to preserve", step.get("interfaces_to_preserve", []))
+    avoid_touching_section = _optional_bullets("Avoid touching", step.get("avoid_touching", []))
+    verification_targets_section = _optional_bullets("Verification targets", step.get("verification_targets", []))
+    risk_flags_section = _optional_bullets("Risk flags", step.get("risk_flags", []))
+    blast_radius_section = _optional_bullets("Blast radius", step.get("blast_radius", []))
+    decision_ids_section = _optional_bullets("Decision IDs", step.get("decision_ids", []))
+    depends_on_section = _optional_bullets("Depends on", step.get("depends_on", []))
+    wave_section = _optional_text_section("Wave", step.get("wave"))
+    ownership_section = _optional_bullets("Owned files", step.get("file_ownership", []))
+    rollback_section = _optional_bullets("Rollback notes", step.get("rollback_notes", []))
+    watchpoints_section = _optional_bullets(
+        "Operational watchpoints",
+        step.get("operational_watchpoints", []),
+    )
     return (
         f"{intro}\n\n"
         f"Current workflow: `{state['workflow_name']}`.\n"
         f"Current step: `{step['id']}` - {step['title']}\n\n"
         f"Goal:\n{step['goal']}\n\n"
+        f"{justification_section}"
+        f"{wave_section}"
+        f"{depends_on_section}"
+        f"{ownership_section}"
+        f"{files_read_first_section}"
         f"Context:\n{context_lines}\n\n"
+        f"{interfaces_section}"
+        f"{avoid_touching_section}"
         f"Constraints:\n{constraints_lines}\n\n"
+        f"{verification_targets_section}"
+        f"{risk_flags_section}"
+        f"{blast_radius_section}"
+        f"{rollback_section}"
+        f"{watchpoints_section}"
+        f"{decision_ids_section}"
         f"Done when:\n{done_lines}\n\n"
         f"Verification commands:\n{verify_lines}\n\n"
         f"AGENTS.md scope check:\n{agents_lines}\n\n"
@@ -673,6 +1018,7 @@ def _implementation_prompt(state: dict[str, Any], step: dict[str, Any], *, is_st
         "- Finish the step's implementation.\n"
         "- Run the step verification commands that apply.\n"
         "- Update the listed `AGENTS.md` files only if this step changed durable guidance.\n"
+        "- Update `STATE.md` if this step changes active initiative status, latest decisions, release state, or unresolved risks.\n"
         f"- When the step is ready for review, run `{STATE_TOOL_COMMAND} set-step-status {step['id']} review_pending`.\n"
         "- Continue in the same thread until the step is ready for the review gate."
     )
@@ -723,10 +1069,72 @@ def _commit_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
     )
 
 
+def _uat_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
+    artifact_path = Path(state["uat_artifact_path"])
+    artifact = load_uat_artifact(artifact_path)
+    checklist_lines = "- uat artifact missing"
+    summary_line = "Summary: none recorded"
+    if artifact is not None:
+        checklist_lines = "\n".join(
+            f"- `{item['id']}` [{item['status']}] {item['title']}"
+            for item in artifact["checklist"]
+        )
+        summary_line = f"Summary: {artifact['summary'] or 'none recorded'}"
+
+    return (
+        "Run the user-acceptance gate now.\n\n"
+        f"Workflow: `{state['workflow_name']}`\n"
+        f"Current step: `{step['id']}` - {step['title']}\n"
+        f"UAT artifact: `{state['uat_artifact_path']}`\n"
+        f"{summary_line}\n\n"
+        "Checklist:\n"
+        f"{checklist_lines}\n\n"
+        "Evaluate the committed implementation against the approved plan, repo memory, and the checklist.\n"
+        "Record only one outcome:\n"
+        f"- Pass: `{STATE_TOOL_COMMAND} set-uat-status passed --summary \"<short summary>\"`\n"
+        f"- Small fixable gap: `{STATE_TOOL_COMMAND} set-uat-status failed-gap --summary \"<short summary>\"`\n"
+        f"- Scope or architecture mismatch that requires replanning: "
+        f"`{STATE_TOOL_COMMAND} set-uat-status failed-replan --summary \"<short summary>\"`"
+    )
+
+
+def _gap_closure_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
+    artifact = load_uat_artifact(Path(state["uat_artifact_path"]))
+    summary = artifact["summary"] if artifact is not None else None
+    verify_lines = _shell_commands(step["verify_cmds"])
+    return (
+        "UAT found a fixable gap. Stay inside the current workflow and close it.\n\n"
+        f"Workflow: `{state['workflow_name']}`\n"
+        f"Current step: `{step['id']}` - {step['title']}\n"
+        f"Current step status: `{step['status']}`\n"
+        f"Latest UAT summary: {summary or 'not recorded'}\n\n"
+        "Rules:\n"
+        "- Fix only the gap identified by UAT.\n"
+        "- Reuse the normal review and commit gates for the current step before rerunning UAT.\n"
+        "- Do not start a new planning session for a fixable gap.\n\n"
+        f"Verification commands:\n{verify_lines}\n\n"
+        f"When the gap fix is ready for review, run `{STATE_TOOL_COMMAND} set-step-status {step['id']} review_pending`.\n"
+        f"When the gap-fix commit lands, run `{STATE_TOOL_COMMAND} set-step-status {step['id']} committed` and resume to return to UAT."
+    )
+
+
+def _replan_required_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
+    artifact = load_uat_artifact(Path(state["uat_artifact_path"]))
+    summary = artifact["summary"] if artifact is not None else None
+    return (
+        "This workflow is blocked in replan-required state and cannot ship.\n\n"
+        f"Workflow: `{state['workflow_name']}`\n"
+        f"Current step: `{step['id']}` - {step['title']}\n"
+        f"UAT summary: {summary or 'not recorded'}\n\n"
+        "Do not keep implementing on this execution workflow.\n"
+        "Start a follow-up planning session that uses the UAT failure summary as the new input and treat the current workflow as terminal until that replan is approved."
+    )
+
+
 def _ship_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
     review_flag = "true" if state["request_codex_review"] else "false"
     return (
-        "The last execution step is committed. Finish the publish phase now.\n\n"
+        "UAT passed and the workflow is ready to ship. Finish the publish phase now.\n\n"
         f"Workflow: `{state['workflow_name']}`\n"
         f"Base branch: `{state['base_branch']}`\n"
         f"Use the `${state['ship_skill']}` skill.\n"
@@ -743,10 +1151,49 @@ def _ship_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
     )
 
 
+def _extract_verify_targets(commands: list[str]) -> list[str]:
+    targets: list[str] = []
+    for command in commands:
+        for token in shlex.split(command):
+            if token.startswith("-"):
+                continue
+            if _looks_like_repo_path(token):
+                targets.append(token)
+    return _unique_preserving_order(targets)
+
+
+def _is_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _unique_preserving_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            ordered.append(value)
+    return ordered
+
+
 def _bullets(items: list[str]) -> str:
     if not items:
         return "- none"
     return "\n".join(f"- {item}" for item in items)
+
+
+def _optional_bullets(title: str, items: list[str]) -> str:
+    if not items:
+        return ""
+    return f"{title}:\n{_bullets(items)}\n\n"
+
+
+def _optional_text_section(title: str, value: Any) -> str:
+    if isinstance(value, int):
+        return f"{title}:\n{value}\n\n"
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    return f"{title}:\n{value.strip()}\n\n"
 
 
 def _shell_commands(commands: list[str]) -> str:

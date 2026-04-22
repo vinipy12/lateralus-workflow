@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "feature_request": "Legacy example rollout",
+  "current": {
+    "requirements": [
+      "Land one isolated behavior change."
+    ],
+    "anti_goals": [],
+    "success_criteria": [
+      "The example behavior ships through one verified slice."
+    ],
+    "entry_points": [
+      "app/example/module.py"
+    ],
+    "blast_radius": [
+      "Example module consumers depend on the current behavior contract."
+    ],
+    "pattern_anchors": [],
+    "verification_anchors": [
+      "tests/example/test_module.py"
+    ],
+    "open_questions": [],
+    "complexity_events": []
+  },
+  "supplements": []
+}

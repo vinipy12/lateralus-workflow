@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from metrics_lib import append_metrics_event, ensure_metrics_store
 from planning_lib import (
     DEFAULT_PLANNING_STATE_PATH,
     append_trace_event,
@@ -24,8 +25,11 @@ from workflow_lib import (
     DEFAULT_SHIP_SKILL,
     DEFAULT_STATE_PATH,
     activation_prompt,
+    build_uat_artifact,
     build_state_from_plan_spec,
     load_plan_spec,
+    reset_uat_artifact_for_rerun,
+    save_uat_artifact,
     load_state,
     next_stop_decision,
     save_state,
@@ -49,6 +53,7 @@ class WorkflowRouteResponse:
 def start_planning(
     feature_request: str | None,
     *,
+    planning_mode: str = "brownfield",
     planning_state_path: Path = DEFAULT_PLANNING_STATE_PATH,
     execution_state_path: Path = DEFAULT_STATE_PATH,
 ) -> WorkflowRouteResponse:
@@ -75,7 +80,7 @@ def start_planning(
         )
 
     execution_state = _load_execution_state(execution_state_path)
-    if execution_state is not None and execution_state["workflow_status"] != "complete":
+    if execution_state is not None and execution_state["workflow_status"] not in {"complete", "replan_required"}:
         return _workflow_blocked(
             "planning",
             (
@@ -84,14 +89,28 @@ def start_planning(
             ),
         )
 
-    state = build_planning_state(feature_request)
+    state = build_planning_state(feature_request, planning_mode=planning_mode)
     state = _rebase_planning_artifacts(state, planning_state_path.parent)
     save_planning_state(state, planning_state_path)
     initialize_planning_artifacts(state)
+    metrics_dir = planning_state_path.resolve().parent / "metrics"
+    ensure_metrics_store(metrics_dir)
+    append_metrics_event(
+        metrics_dir,
+        "planning_started",
+        details={
+            "feature_request": state["feature_request"],
+            "planning_mode": state["planning_mode"],
+        },
+    )
     return WorkflowRouteResponse(
         status="ok",
         mode="planning",
-        message="workflow planning started",
+        message=(
+            "workflow bootstrap planning started"
+            if planning_mode == "greenfield"
+            else "workflow planning started"
+        ),
         additional_context=(
             "Treat the user's prompt as a workflow planning trigger, not as a normal implementation request. "
             "The planning state and shared artifacts have already been created. Do not ask the user to run setup "
@@ -119,6 +138,15 @@ def revise_planning(
     save_planning_state(updated_state, planning_state_path)
     detail = feedback or "revision requested without additional guidance"
     append_trace_event(updated_state, "revision_requested", detail)
+    append_metrics_event(
+        planning_state_path.resolve().parent / "metrics",
+        "planning_revised",
+        details={
+            "feature_request": updated_state["feature_request"],
+            "planning_mode": updated_state["planning_mode"],
+            "detail": detail,
+        },
+    )
     return WorkflowRouteResponse(
         status="ok",
         mode="planning",
@@ -174,6 +202,9 @@ def activate_execution(
     execution_state_path: Path = DEFAULT_STATE_PATH,
 ) -> WorkflowRouteResponse:
     plan_spec = load_plan_spec(source, plan_id=plan_id)
+    execution_root = execution_state_path.resolve().parent
+    metrics_dir = execution_root / "metrics"
+    uat_artifact_path = execution_root / "uat.json"
     state = build_state_from_plan_spec(
         plan_spec,
         plan_path=_relative_or_source(source),
@@ -182,8 +213,32 @@ def activate_execution(
         base_branch=base_branch,
         mode=mode,
         request_codex_review=request_codex_review,
+        uat_artifact_path=str(uat_artifact_path),
+        metrics_dir=str(metrics_dir),
     )
     save_state(state, execution_state_path)
+    save_uat_artifact(
+        build_uat_artifact(
+            plan_spec,
+            workflow_name=state["workflow_name"],
+            plan_path=state["plan_path"],
+            project_memory_path="PROJECT.md",
+            requirements_memory_path="REQUIREMENTS.md",
+            state_memory_path="STATE.md",
+        ),
+        uat_artifact_path,
+    )
+    ensure_metrics_store(metrics_dir)
+    append_metrics_event(
+        metrics_dir,
+        "execution_activated",
+        details={
+            "workflow_name": state["workflow_name"],
+            "workflow_status": state["workflow_status"],
+            "mode": state["mode"],
+            "plan_path": state["plan_path"],
+        },
+    )
     return WorkflowRouteResponse(
         status="ok",
         mode="execution",
@@ -224,7 +279,11 @@ def resume_workflow(
     if execution_state is None:
         return _workflow_blocked("status", "there is no active workflow state to resume")
 
+    previous_status = execution_state["workflow_status"]
     next_state, decision, changed = next_stop_decision(execution_state)
+    if previous_status == "gap_closure_pending" and next_state["workflow_status"] == "uat_pending":
+        reset_uat_artifact_for_rerun(Path(next_state["uat_artifact_path"]))
+        next_state, decision, _ = next_stop_decision(next_state)
     if changed:
         save_state(next_state, execution_state_path)
 
@@ -302,6 +361,10 @@ def cancel_workflow(
     execution_state_path: Path = DEFAULT_STATE_PATH,
 ) -> WorkflowRouteResponse:
     cleared_labels: list[str] = []
+    metrics_dirs = _metrics_roots_for_cancel(
+        planning_state_path=planning_state_path,
+        execution_state_path=execution_state_path,
+    )
 
     if clear_planning_state(planning_state_path):
         cleared_labels.append("planning state")
@@ -309,6 +372,15 @@ def cancel_workflow(
     if execution_state_path.exists():
         execution_state_path.unlink()
         cleared_labels.append("execution state")
+
+    if cleared_labels:
+        for metrics_dir in metrics_dirs:
+            ensure_metrics_store(metrics_dir)
+            append_metrics_event(
+                metrics_dir,
+                "workflow_canceled",
+                details={"cleared": cleared_labels},
+            )
 
     if not cleared_labels:
         message = "no active workflow state to cancel"
@@ -356,13 +428,46 @@ def _load_planning_state_safe(path: Path) -> tuple[dict | None, str | None]:
 def _rebase_planning_artifacts(state: dict, planning_root: Path) -> dict:
     rebased = dict(state)
     planning_root = planning_root.resolve()
+    repo_root = planning_root
+    if planning_root.name == "workflow" and planning_root.parent.name == ".codex":
+        repo_root = planning_root.parent.parent
     rebased["approved_plan_path"] = str(planning_root / "approved-plan.json")
     rebased["context_path"] = str(planning_root / "context.json")
     rebased["discovery_dossier_path"] = str(planning_root / "discovery_dossier.json")
     rebased["scope_contract_path"] = str(planning_root / "scope_contract.json")
     rebased["architecture_constraints_path"] = str(planning_root / "architecture_constraints.json")
+    rebased["product_scope_audit_path"] = str(planning_root / "product_scope_audit.json")
+    rebased["skeptic_audit_path"] = str(planning_root / "skeptic_audit.json")
+    rebased["convergence_summary_path"] = str(planning_root / "convergence_summary.json")
+    rebased["stack_runtime_decision_path"] = str(planning_root / "stack_runtime_decision.json")
+    rebased["bootstrap_expectations_path"] = str(planning_root / "bootstrap_expectations.json")
     rebased["planning_trace_path"] = str(planning_root / "planning_trace.json")
+    rebased["project_memory_path"] = str(repo_root / "PROJECT.md")
+    rebased["requirements_memory_path"] = str(repo_root / "REQUIREMENTS.md")
+    rebased["state_memory_path"] = str(repo_root / "STATE.md")
     return rebased
+
+
+def _metrics_roots_for_cancel(*, planning_state_path: Path, execution_state_path: Path) -> list[Path]:
+    roots: list[Path] = []
+    planning_state, _ = _load_planning_state_safe(planning_state_path)
+    if planning_state is not None:
+        roots.append(planning_state_path.resolve().parent / "metrics")
+
+    execution_state = _load_execution_state(execution_state_path)
+    if execution_state is not None:
+        metrics_dir = execution_state.get("metrics_dir")
+        if isinstance(metrics_dir, str) and metrics_dir.strip():
+            roots.append(Path(metrics_dir))
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root.resolve())
+        if key not in seen:
+            seen.add(key)
+            unique.append(root)
+    return unique
 
 
 def _relative_or_source(path: Path) -> str:

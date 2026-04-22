@@ -14,6 +14,8 @@
     "current_step_id",
     "base_branch",
     "request_codex_review",
+    "uat_artifact_path",
+    "metrics_dir",
     "steps"
   ],
   "properties": {
@@ -29,6 +31,9 @@
       "type": "string",
       "enum": [
         "active",
+        "uat_pending",
+        "gap_closure_pending",
+        "replan_required",
         "ship_pending",
         "complete"
       ]
@@ -62,6 +67,14 @@
     },
     "request_codex_review": {
       "type": "boolean"
+    },
+    "uat_artifact_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metrics_dir": {
+      "type": "string",
+      "minLength": 1
     },
     "steps": {
       "type": "array",
@@ -134,6 +147,91 @@
           "commit_message": {
             "type": "string",
             "minLength": 1
+          },
+          "justification": {
+            "type": "string",
+            "minLength": 1
+          },
+          "files_read_first": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "interfaces_to_preserve": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "avoid_touching": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "verification_targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "risk_flags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "blast_radius": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "decision_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "wave": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "file_ownership": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "rollback_notes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "operational_watchpoints": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           "status": {
             "type": "string",

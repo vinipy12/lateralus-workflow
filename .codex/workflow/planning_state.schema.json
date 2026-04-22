@@ -6,13 +6,23 @@
   "required": [
     "version",
     "status",
+    "planning_mode",
     "feature_request",
     "approved_plan_path",
     "context_path",
     "discovery_dossier_path",
     "scope_contract_path",
     "architecture_constraints_path",
+    "product_scope_audit_path",
+    "skeptic_audit_path",
+    "convergence_summary_path",
+    "stack_runtime_decision_path",
+    "bootstrap_expectations_path",
     "planning_trace_path",
+    "project_memory_path",
+    "requirements_memory_path",
+    "state_memory_path",
+    "phase_checkpoint",
     "clarifying_question_limit",
     "discovery_callback_limit",
     "revision_count",
@@ -36,6 +46,13 @@
         "revising",
         "blocked",
         "approval_ready"
+      ]
+    },
+    "planning_mode": {
+      "type": "string",
+      "enum": [
+        "brownfield",
+        "greenfield"
       ]
     },
     "feature_request": {
@@ -62,9 +79,54 @@
       "type": "string",
       "minLength": 1
     },
+    "product_scope_audit_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "skeptic_audit_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "convergence_summary_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stack_runtime_decision_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bootstrap_expectations_path": {
+      "type": "string",
+      "minLength": 1
+    },
     "planning_trace_path": {
       "type": "string",
       "minLength": 1
+    },
+    "project_memory_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requirements_memory_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state_memory_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "phase_checkpoint": {
+      "type": "string",
+      "enum": [
+        "discuss",
+        "discovery",
+        "architecture_audit",
+        "planning",
+        "product_scope_audit",
+        "skeptic_audit",
+        "convergence",
+        "approval_ready"
+      ]
     },
     "clarifying_question_limit": {
       "type": "integer",

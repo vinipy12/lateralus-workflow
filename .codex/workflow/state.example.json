@@ -9,6 +9,8 @@
   "current_step_id": "step-1",
   "base_branch": "origin/main",
   "request_codex_review": true,
+  "uat_artifact_path": ".codex/workflow/uat.json",
+  "metrics_dir": ".codex/workflow/metrics",
   "steps": [
     {
       "id": "step-1",
@@ -34,6 +36,42 @@
         "app/example/AGENTS.md"
       ],
       "commit_message": "feature: land example step 1",
+      "justification": "This isolates the first behavior change so review and rollback remain simple.",
+      "files_read_first": [
+        "app/example/module.py",
+        "tests/example/test_module.py"
+      ],
+      "interfaces_to_preserve": [
+        "Example module public behavior contract"
+      ],
+      "avoid_touching": [
+        "app/example/second_module.py"
+      ],
+      "verification_targets": [
+        "tests/example/test_module.py"
+      ],
+      "risk_flags": [
+        "Consumer behavior must remain stable for current callers."
+      ],
+      "blast_radius": [
+        "app/example/module.py consumers",
+        "tests/example/test_module.py"
+      ],
+      "decision_ids": [
+        "D-EXAMPLE-STEP-1"
+      ],
+      "depends_on": [],
+      "wave": 1,
+      "file_ownership": [
+        "app/example/module.py",
+        "tests/example/test_module.py"
+      ],
+      "rollback_notes": [
+        "Revert the step 1 commit if the first verified slice regresses current callers."
+      ],
+      "operational_watchpoints": [
+        "Watch the example module public behavior contract during review and verification."
+      ],
       "status": "implementing",
       "review_summary": null
     },
@@ -57,6 +95,43 @@
         "AGENTS.md"
       ],
       "commit_message": "feature: land example step 2",
+      "justification": "This lands the second behavior change without reopening the first slice.",
+      "files_read_first": [
+        "app/example/second_module.py",
+        "tests/example/test_second_module.py"
+      ],
+      "interfaces_to_preserve": [
+        "Second example module public behavior contract"
+      ],
+      "avoid_touching": [
+        "app/example/module.py"
+      ],
+      "verification_targets": [
+        "tests/example/test_second_module.py"
+      ],
+      "risk_flags": [
+        "Step 1 behavior must remain intact after the follow-up slice."
+      ],
+      "blast_radius": [
+        "app/example/second_module.py consumers"
+      ],
+      "decision_ids": [
+        "D-EXAMPLE-STEP-2"
+      ],
+      "depends_on": [
+        "step-1"
+      ],
+      "wave": 2,
+      "file_ownership": [
+        "app/example/second_module.py",
+        "tests/example/test_second_module.py"
+      ],
+      "rollback_notes": [
+        "Revert only the step 2 commit if the follow-up slice destabilizes the first slice."
+      ],
+      "operational_watchpoints": [
+        "Watch downstream consumers of the second example module while step 2 lands."
+      ],
       "status": "pending",
       "review_summary": null
     }
