@@ -896,11 +896,13 @@ def audit_plan_against_discovery(plan_spec: dict[str, Any], discovery: dict[str,
         raise ValueError("discovery dossier missing current section")
 
     entry_points = _ensure_discovery_string_list(current.get("entry_points", []), "current.entry_points")
-    if not entry_points:
-        return []
     direct_verification_matrix = _normalize_direct_verification_matrix(
         current.get("direct_verification_matrix", [])
     )
+    if direct_verification_matrix and not entry_points:
+        return ["discovery current.direct_verification_matrix requires non-empty current.entry_points"]
+    if not entry_points:
+        return []
 
     requirements_by_id = {
         str(requirement["id"]): requirement for requirement in plan_spec.get("requirements", []) if isinstance(requirement, dict)
@@ -1957,6 +1959,8 @@ def _validate_discovery_phase(state: dict[str, Any]) -> list[str]:
     if not _artifact_string_list(current.get("success_criteria")):
         issues.append("discovery phase requires current.success_criteria")
     known_entry_points = set(_artifact_string_list(current.get("entry_points")))
+    if direct_verification_matrix and not known_entry_points:
+        issues.append("discovery phase direct_verification_matrix requires non-empty current.entry_points")
     for item in direct_verification_matrix:
         if known_entry_points and item["entry_point"] not in known_entry_points:
             issues.append(
@@ -1977,8 +1981,6 @@ def _validate_discovery_phase(state: dict[str, Any]) -> list[str]:
     anchors = []
     for field_name in ("entry_points", "pattern_anchors", "verification_anchors"):
         anchors.extend(_artifact_string_list(current.get(field_name)))
-    for item in direct_verification_matrix:
-        anchors.extend(item["verification_targets"])
     if not anchors:
         issues.append(
             "discovery phase requires at least one entry point, pattern anchor, or verification anchor"

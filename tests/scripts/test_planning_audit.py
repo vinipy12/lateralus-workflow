@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import importlib.util
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -132,3 +134,117 @@ def test_direct_consumer_audit_flags_unmapped_consumers_without_matrix():
 
     assert any("no direct verification target mapping" in issue for issue in issues)
     assert any(entry_point in issue for issue in issues)
+
+
+def test_direct_consumer_audit_rejects_matrix_without_entry_points():
+    planning_lib = _load_planning_lib()
+    entry_point = "app/integrations/reporting_adapter.py"
+    direct_target = "tests/contracts/test_reporting_adapter_consumer.py"
+    plan_spec = _compatibility_plan_for(
+        entry_point,
+        verify_cmds=[f"uv run pytest {direct_target}"],
+    )
+    discovery = {
+        "version": 1,
+        "feature_request": "Preserve reporting consumer compatibility",
+        "current": {
+            "requirements": [],
+            "anti_goals": [],
+            "success_criteria": [],
+            "entry_points": [],
+            "blast_radius": [f"{entry_point} consumers depend on the current behavior contract."],
+            "pattern_anchors": [],
+            "verification_anchors": [],
+            "direct_verification_matrix": [
+                {
+                    "entry_point": entry_point,
+                    "verification_targets": [direct_target],
+                }
+            ],
+            "open_questions": [],
+            "complexity_events": [],
+        },
+        "supplements": [],
+    }
+
+    issues = planning_lib.audit_plan_against_discovery(plan_spec, discovery)
+
+    assert issues == ["discovery current.direct_verification_matrix requires non-empty current.entry_points"]
+
+
+def test_discovery_phase_rejects_matrix_without_entry_points():
+    planning_lib = _load_planning_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_root = Path(tmpdir)
+        state = planning_lib.build_planning_state(
+            "Preserve reporting consumer compatibility",
+            context_path=str(tmp_root / "context.json"),
+            discovery_dossier_path=str(tmp_root / "discovery_dossier.json"),
+            scope_contract_path=str(tmp_root / "scope_contract.json"),
+            architecture_constraints_path=str(tmp_root / "architecture_constraints.json"),
+            product_scope_audit_path=str(tmp_root / "product_scope_audit.json"),
+            skeptic_audit_path=str(tmp_root / "skeptic_audit.json"),
+            convergence_summary_path=str(tmp_root / "convergence_summary.json"),
+            approved_plan_path=str(tmp_root / "approved-plan.json"),
+            planning_trace_path=str(tmp_root / "planning_trace.json"),
+            stack_runtime_decision_path=str(tmp_root / "stack_runtime_decision.json"),
+            bootstrap_expectations_path=str(tmp_root / "bootstrap_expectations.json"),
+            project_memory_path=str(tmp_root / "PROJECT.md"),
+            requirements_memory_path=str(tmp_root / "REQUIREMENTS.md"),
+            state_memory_path=str(tmp_root / "STATE.md"),
+        )
+        planning_lib.initialize_planning_artifacts(state)
+        Path(state["context_path"]).write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "feature_request": state["feature_request"],
+                    "goal": "Preserve a discovered consumer contract.",
+                    "target_user": "Workflow maintainers",
+                    "desired_behavior": "Discovery should reject malformed direct verification matrices.",
+                    "good_outcomes": [],
+                    "bad_outcomes": [],
+                    "locked_decisions": [],
+                    "defaults_taken": [],
+                    "open_questions": [],
+                    "constraints": [],
+                    "success_criteria": ["Discovery catches malformed compatibility metadata."],
+                    "non_goals": [],
+                    "unresolved_risks": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        Path(state["discovery_dossier_path"]).write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "feature_request": state["feature_request"],
+                    "current": {
+                        "requirements": ["Preserve reporting consumer compatibility."],
+                        "assumptions": [],
+                        "anti_goals": [],
+                        "success_criteria": ["The reporting consumer contract remains explicit and auditable."],
+                        "entry_points": [],
+                        "blast_radius": ["Reporting consumers depend on the current behavior contract."],
+                        "pattern_anchors": [],
+                        "verification_anchors": [],
+                        "direct_verification_matrix": [
+                            {
+                                "entry_point": "app/integrations/reporting_adapter.py",
+                                "verification_targets": ["tests/contracts/test_reporting_adapter_consumer.py"],
+                            }
+                        ],
+                        "open_questions": [],
+                        "complexity_events": [],
+                    },
+                    "supplements": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        issues = planning_lib.validate_phase_outputs(state, phase="discovery")
+
+    assert "discovery phase direct_verification_matrix requires non-empty current.entry_points" in issues
