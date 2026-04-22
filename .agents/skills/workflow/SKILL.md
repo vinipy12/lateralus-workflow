@@ -56,9 +56,14 @@ For plan revisions:
 For an active execution workflow:
 
 1. Run `resume` to load the exact next instruction for the current step.
-2. Use `python3 .agents/skills/workflow/scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
-3. Record UAT outcomes with `python3 .agents/skills/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`.
-4. When the workflow reaches ship, use `$ship`.
+2. Keep the phase boundary explicit:
+   - Development ends only when the current step reaches `committed`.
+   - Review is a hard gate before commit; do not bypass it.
+   - Deployment begins only after UAT moves the workflow to `ship_pending`.
+3. Use `python3 .agents/skills/workflow/scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
+4. Record UAT outcomes with `python3 .agents/skills/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`.
+5. Treat `set-workflow-status complete` as the final ship-only transition. Other manual workflow-status edits require `--override-reason`.
+6. When the workflow reaches `ship_pending`, use `$ship`.
 
 For direct activation from an approved plan artifact:
 

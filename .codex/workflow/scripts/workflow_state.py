@@ -77,6 +77,7 @@ def main() -> int:
     if args.command == "set-step-status":
         state = _require_state(args.path)
         step = _find_step(state, args.step_id)
+        _validate_step_status_change(state, step, new_status=args.status)
         step["status"] = args.status
         if args.review_summary is not None:
             step["review_summary"] = args.review_summary
@@ -97,6 +98,9 @@ def main() -> int:
 
     if args.command == "set-workflow-status":
         state = _require_state(args.path)
+        override_reason = _normalize_override_reason(args.override_reason)
+        step = current_step(state)
+        _validate_workflow_status_change(state, step, new_status=args.status, override_reason=override_reason)
         state["workflow_status"] = args.status
         save_state(state, args.path)
         if args.status == "complete":
@@ -112,7 +116,7 @@ def main() -> int:
         _emit_override_if_needed(
             state,
             command="set-workflow-status",
-            reason=args.override_reason,
+            reason=override_reason,
             target=args.status,
         )
         print(f"workflow_status -> {args.status}")
@@ -177,6 +181,55 @@ def _find_step(state: dict, step_id: str) -> dict:
         if step["id"] == step_id:
             return step
     raise SystemExit(f"step not found: {step_id}")
+
+
+def _validate_step_status_change(state: dict, step: dict, *, new_status: str) -> None:
+    if new_status != "shipped":
+        return
+    if step["id"] != state["current_step_id"]:
+        raise SystemExit(
+            f"set-step-status shipped requires the current step, got `{step['id']}` while current_step_id is "
+            f"`{state['current_step_id']}`"
+        )
+    if state["workflow_status"] != "ship_pending":
+        raise SystemExit(
+            f"set-step-status shipped requires workflow_status ship_pending, got {state['workflow_status']}"
+        )
+    if step["status"] != "committed":
+        raise SystemExit(
+            f"set-step-status shipped requires the current step to be committed, got {step['status']}"
+        )
+
+
+def _validate_workflow_status_change(
+    state: dict,
+    step: dict,
+    *,
+    new_status: str,
+    override_reason: str | None,
+) -> None:
+    if new_status == "complete":
+        if state["workflow_status"] != "ship_pending":
+            raise SystemExit(
+                f"set-workflow-status complete requires workflow_status ship_pending, got {state['workflow_status']}"
+            )
+        if step["status"] != "shipped":
+            raise SystemExit(
+                f"set-workflow-status complete requires the current step to be shipped, got {step['status']}"
+            )
+        return
+
+    if override_reason is None:
+        raise SystemExit(
+            f"set-workflow-status {new_status} is a manual override; rerun with --override-reason \"<why>\""
+        )
+
+
+def _normalize_override_reason(reason: str | None) -> str | None:
+    if not isinstance(reason, str):
+        return None
+    normalized = reason.strip()
+    return normalized or None
 
 
 def _emit_step_metrics(state: dict, step: dict, *, status: str, review_summary: str | None) -> None:

@@ -94,17 +94,22 @@ Planning reads repo memory from:
 - Execution state CLI:
   - `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> <status>`
   - `python3 .codex/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`
-  - `python3 .codex/workflow/scripts/workflow_state.py set-workflow-status <status>`
+  - `python3 .codex/workflow/scripts/workflow_state.py set-workflow-status complete`
+  - `python3 .codex/workflow/scripts/workflow_state.py set-workflow-status <status> --override-reason "..."`
 
 ## Execution Model
 
 Execution now ends with a blocking post-code control loop:
 
-1. implementation, review, and commit per step
-2. `uat_pending` after the last committed step
-3. `gap_closure_pending` for fixable UAT gaps inside the same workflow
-4. `replan_required` when UAT shows a scope or architecture mismatch
-5. `ship_pending` only after UAT passes
+1. Development owns implementation through `committed` for each step
+2. Review remains embedded in execution and blocks promotion to commit
+3. `uat_pending` after the last committed step
+4. `gap_closure_pending` for fixable UAT gaps inside the same workflow
+5. `replan_required` when UAT shows a scope or architecture mismatch
+6. `ship_pending` only after UAT passes
+7. Deployment is intentionally limited to branch push, PR creation, optional `@codex review`, and workflow completion
+
+Manual workflow-status jumps are override-only operations. `set-workflow-status complete` is reserved for the real ship path after the current step is already `shipped`.
 
 Telemetry stays local and auditable under `.codex/workflow/metrics/`.
 

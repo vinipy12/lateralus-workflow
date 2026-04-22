@@ -107,6 +107,7 @@ def main() -> int:
             review_path=args.review_path or ".codex/workflow/code_review.md",
             ship_skill=args.ship_skill or "ship",
             request_codex_review=args.request_codex_review,
+            planning_state_path=planning_state_path or Path(".codex/workflow/planning_state.json"),
             execution_state_path=execution_state_path or Path(".codex/workflow/state.json"),
         )
     elif args.command == "resume":

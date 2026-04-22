@@ -25,7 +25,6 @@ from workflow_lib import (
     DEFAULT_REVIEW_PATH,
     DEFAULT_SHIP_SKILL,
     DEFAULT_STATE_PATH,
-    load_plan_spec,
 )
 
 
@@ -207,7 +206,6 @@ def _handle_execution_activation(request: WorkflowRequest) -> int:
     if request.source is None:
         raise ValueError("execution activation requires a plan source")
 
-    load_plan_spec(request.source, plan_id=request.plan_id)
     response = activate_execution(
         request.source,
         plan_id=request.plan_id,
@@ -216,6 +214,7 @@ def _handle_execution_activation(request: WorkflowRequest) -> int:
         base_branch=request.base_branch or DEFAULT_BASE_BRANCH,
         mode=request.mode or "ship",
         request_codex_review=True if request.request_codex_review is None else request.request_codex_review,
+        planning_state_path=DEFAULT_PLANNING_STATE_PATH,
         execution_state_path=DEFAULT_STATE_PATH,
     )
     return _print_response(response.message, response.additional_context)

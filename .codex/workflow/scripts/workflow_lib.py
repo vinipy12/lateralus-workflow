@@ -901,15 +901,16 @@ def next_stop_decision(state: dict[str, Any]) -> tuple[dict[str, Any], WorkflowD
 
     step = current_step(state)
 
-    if step["status"] == "shipped":
-        state["workflow_status"] = "complete"
-        return state, WorkflowDecision(action="noop"), True
-
     if state["workflow_status"] == "replan_required":
         return state, WorkflowDecision(action="block", prompt=_replan_required_prompt(state, step)), False
 
     if state["workflow_status"] == "ship_pending":
+        if step["status"] == "shipped":
+            return state, WorkflowDecision(action="block", prompt=_ship_completion_prompt(state, step)), False
         return state, WorkflowDecision(action="block", prompt=_ship_prompt(state, step)), False
+
+    if step["status"] == "shipped":
+        return state, WorkflowDecision(action="block", prompt=_shipped_state_reconciliation_prompt(state, step)), False
 
     if state["workflow_status"] == "uat_pending":
         return state, WorkflowDecision(action="block", prompt=_uat_prompt(state, step)), False
@@ -995,6 +996,10 @@ def _implementation_prompt(state: dict[str, Any], step: dict[str, Any], *, is_st
         f"{intro}\n\n"
         f"Current workflow: `{state['workflow_name']}`.\n"
         f"Current step: `{step['id']}` - {step['title']}\n\n"
+        "Phase contract:\n"
+        "- Development owns this step until it reaches `committed`.\n"
+        "- Review is a blocking gate before commit.\n"
+        "- Deployment does not begin until UAT advances the workflow to `ship_pending`.\n\n"
         f"Goal:\n{step['goal']}\n\n"
         f"{justification_section}"
         f"{wave_section}"
@@ -1028,6 +1033,7 @@ def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
     return (
         "Run the review gate now.\n\n"
         f"Review only the current execution step `{step['id']}` - {step['title']} using `{state['review_path']}` and the same bug-focused standards as `/review`.\n"
+        "This review stays inside the execution phase and blocks promotion from development work to commit.\n"
         "Treat the review as blocking:\n"
         "- Findings first, ordered by severity.\n"
         "- Focus on bugs, regressions, risky behavior, stale AGENTS guidance, and missing verification.\n"
@@ -1139,6 +1145,8 @@ def _ship_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         f"Base branch: `{state['base_branch']}`\n"
         f"Use the `${state['ship_skill']}` skill.\n"
         f"Request `@codex review` after PR creation: `{review_flag}`\n\n"
+        "Deployment scope for this workflow is limited to branch push, PR creation, optional `@codex review`, "
+        "and workflow completion.\n\n"
         "Requirements:\n"
         "- Do not create an intermediate `PR_DESCRIPTION.md` file.\n"
         "- Generate the PR title and body in memory.\n"
@@ -1148,6 +1156,30 @@ def _ship_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         f"- Run `{STATE_TOOL_COMMAND} set-step-status {step['id']} shipped`.\n"
         f"- Run `{STATE_TOOL_COMMAND} set-workflow-status complete`.\n"
         "- Report the PR URL and final status."
+    )
+
+
+def _ship_completion_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
+    return (
+        "The publish work is already marked shipped, but the workflow is not closed yet.\n\n"
+        f"Workflow: `{state['workflow_name']}`\n"
+        f"Current step: `{step['id']}` - {step['title']}\n"
+        "The current step is `shipped` and the workflow is still `ship_pending`.\n\n"
+        "Finish the deployment phase now:\n"
+        f"- Run `{STATE_TOOL_COMMAND} set-workflow-status complete`.\n"
+        "- Report the PR URL and final status."
+    )
+
+
+def _shipped_state_reconciliation_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
+    return (
+        "The workflow state is inconsistent and needs manual reconciliation.\n\n"
+        f"Workflow: `{state['workflow_name']}`\n"
+        f"Workflow status: `{state['workflow_status']}`\n"
+        f"Current step: `{step['id']}` - {step['title']}\n"
+        f"Current step status: `{step['status']}`\n\n"
+        "Do not keep implementing. If publish really succeeded, reconcile the workflow state with explicit "
+        "overrides or cancel the workflow before continuing."
     )
 
 

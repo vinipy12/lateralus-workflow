@@ -37,6 +37,7 @@ from workflow_lib import (
 
 
 DEFAULT_PLAN_SOURCE = Path(".codex/workflow/approved-plan.json")
+TERMINAL_EXECUTION_WORKFLOW_STATUSES = {"complete", "replan_required"}
 
 
 @dataclass(frozen=True)
@@ -71,22 +72,19 @@ def start_planning(
             f"planning state at `{planning_state_path}` is invalid: {planning_error}",
         )
     if planning_state is not None:
-        return _workflow_blocked(
-            "planning",
-            (
-                f"an active planning session already exists with status `{planning_state['status']}`; "
-                "use `$workflow` to revise, approve, resume, check status, or cancel it"
-            ),
-        )
+        return _workflow_blocked("planning", _planning_activation_blocker(planning_state))
 
-    execution_state = _load_execution_state(execution_state_path)
-    if execution_state is not None and execution_state["workflow_status"] not in {"complete", "replan_required"}:
+    execution_state, execution_error = _load_execution_state_safe(execution_state_path)
+    if execution_error is not None:
         return _workflow_blocked(
             "planning",
-            (
-                f"an execution workflow is already active for `{execution_state['workflow_name']}`; "
-                "finish or cancel it before starting a new plan"
-            ),
+            f"execution state at `{execution_state_path}` is invalid: {execution_error}",
+        )
+    execution_blocker = _active_execution_blocker(execution_state)
+    if execution_blocker is not None:
+        return _workflow_blocked(
+            "planning",
+            execution_blocker,
         )
 
     state = build_planning_state(feature_request, planning_mode=planning_mode)
@@ -173,6 +171,16 @@ def approve_current_plan(
     if state is None:
         return _workflow_blocked("planning", "there is no active planning session to approve")
 
+    execution_state, execution_error = _load_execution_state_safe(execution_state_path)
+    if execution_error is not None:
+        return _workflow_blocked(
+            "planning",
+            f"execution state at `{execution_state_path}` is invalid: {execution_error}",
+        )
+    execution_blocker = _active_execution_blocker(execution_state)
+    if execution_blocker is not None:
+        return _workflow_blocked("planning", execution_blocker)
+
     execution_state = approve_planning(
         state,
         planning_state_path=planning_state_path,
@@ -199,8 +207,28 @@ def activate_execution(
     review_path: str = DEFAULT_REVIEW_PATH,
     ship_skill: str = DEFAULT_SHIP_SKILL,
     request_codex_review: bool = True,
+    planning_state_path: Path = DEFAULT_PLANNING_STATE_PATH,
     execution_state_path: Path = DEFAULT_STATE_PATH,
 ) -> WorkflowRouteResponse:
+    planning_state, planning_error = _load_planning_state_safe(planning_state_path)
+    if planning_error is not None:
+        return _workflow_blocked(
+            "execution",
+            f"planning state at `{planning_state_path}` is invalid: {planning_error}",
+        )
+    if planning_state is not None:
+        return _workflow_blocked("execution", _planning_execution_start_blocker(planning_state))
+
+    execution_state, execution_error = _load_execution_state_safe(execution_state_path)
+    if execution_error is not None:
+        return _workflow_blocked(
+            "execution",
+            f"execution state at `{execution_state_path}` is invalid: {execution_error}",
+        )
+    execution_blocker = _active_execution_blocker(execution_state)
+    if execution_blocker is not None:
+        return _workflow_blocked("execution", execution_blocker)
+
     plan_spec = load_plan_spec(source, plan_id=plan_id)
     execution_root = execution_state_path.resolve().parent
     metrics_dir = execution_root / "metrics"
@@ -412,10 +440,15 @@ def _workflow_blocked(mode: str, message: str) -> WorkflowRouteResponse:
 
 
 def _load_execution_state(path: Path) -> dict | None:
+    state, _ = _load_execution_state_safe(path)
+    return state
+
+
+def _load_execution_state_safe(path: Path) -> tuple[dict | None, str | None]:
     try:
-        return load_state(path)
-    except Exception:
-        return None
+        return load_state(path), None
+    except Exception as exc:
+        return None, str(exc)
 
 
 def _load_planning_state_safe(path: Path) -> tuple[dict | None, str | None]:
@@ -423,6 +456,33 @@ def _load_planning_state_safe(path: Path) -> tuple[dict | None, str | None]:
         return load_planning_state(path), None
     except Exception as exc:
         return None, str(exc)
+
+
+def _planning_activation_blocker(planning_state: dict) -> str:
+    return (
+        f"an active planning session already exists with status `{planning_state['status']}`; "
+        "use `planning-approve` when the plan is ready, `resume` to continue it, or `cancel` to clear it"
+    )
+
+
+def _planning_execution_start_blocker(planning_state: dict) -> str:
+    return (
+        f"cannot activate execution while the planning session is `{planning_state['status']}`; "
+        "use `planning-approve` to promote the approved plan into execution, `resume` to continue planning, "
+        "or `cancel` to clear it before starting a different execution workflow"
+    )
+
+
+def _active_execution_blocker(execution_state: dict | None) -> str | None:
+    if execution_state is None:
+        return None
+    if execution_state["workflow_status"] in TERMINAL_EXECUTION_WORKFLOW_STATUSES:
+        return None
+    return (
+        f"an execution workflow is already active for `{execution_state['workflow_name']}` with status "
+        f"`{execution_state['workflow_status']}`; use `resume` to continue it or `cancel` to clear it before "
+        "starting another workflow"
+    )
 
 
 def _rebase_planning_artifacts(state: dict, planning_root: Path) -> dict:

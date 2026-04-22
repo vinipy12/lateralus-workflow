@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import subprocess
 import sys
@@ -948,6 +950,203 @@ def test_workflow_router_revise_planning_emits_metrics_event():
     assert scorecard["counts"]["planning_revised"] == 1
 
 
+def test_workflow_router_execution_start_blocks_while_planning_is_active():
+    workflow_router = _load_workflow_router_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        planning_state_path = Path(tmpdir) / "planning_state.json"
+        execution_state_path = Path(tmpdir) / "state.json"
+        plan_path = Path(tmpdir) / "plan.json"
+        plan_path.write_text(json.dumps(_example_plan()), encoding="utf-8")
+
+        workflow_router.start_planning(
+            "Plan the guarded execution activation",
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+        response = workflow_router.activate_execution(
+            plan_path,
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+        execution_state_exists = execution_state_path.exists()
+
+    assert response.status == "blocked"
+    assert execution_state_exists is False
+    assert "planning-approve" in response.message
+    assert "resume" in response.message
+    assert "cancel" in response.message
+
+
+def test_workflow_router_execution_start_blocks_while_execution_is_active():
+    workflow_lib = _load_workflow_lib()
+    workflow_router = _load_workflow_router_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        planning_state_path = Path(tmpdir) / "planning_state.json"
+        execution_state_path = Path(tmpdir) / "state.json"
+        plan_path = Path(tmpdir) / "plan.json"
+        plan_path.write_text(json.dumps(_example_plan()), encoding="utf-8")
+
+        active_state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        workflow_lib.save_state(active_state, execution_state_path)
+
+        response = workflow_router.activate_execution(
+            plan_path,
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+        persisted_state = workflow_lib.load_state(execution_state_path)
+
+    assert response.status == "blocked"
+    assert persisted_state["workflow_name"] == active_state["workflow_name"]
+    assert persisted_state["workflow_status"] == "active"
+    assert "resume" in response.message
+    assert "cancel" in response.message
+
+
+def test_workflow_router_execution_start_allows_terminal_execution_replacement():
+    workflow_lib = _load_workflow_lib()
+    workflow_router = _load_workflow_router_lib()
+
+    replacement_plan = _example_plan()
+    replacement_plan["workflow_name"] = "Replacement workflow"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        planning_state_path = Path(tmpdir) / "planning_state.json"
+        execution_state_path = Path(tmpdir) / "state.json"
+        plan_path = Path(tmpdir) / "plan.json"
+        plan_path.write_text(json.dumps(replacement_plan), encoding="utf-8")
+
+        prior_state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="OLD.md"),
+            tmpdir,
+        )
+        prior_state["workflow_name"] = "Old workflow"
+        prior_state["workflow_status"] = "complete"
+        prior_state["steps"][0]["status"] = "shipped"
+        workflow_lib.save_state(prior_state, execution_state_path)
+
+        response = workflow_router.activate_execution(
+            plan_path,
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+        persisted_state = workflow_lib.load_state(execution_state_path)
+
+    assert response.status == "ok"
+    assert persisted_state["workflow_name"] == "Replacement workflow"
+    assert persisted_state["workflow_status"] == "active"
+
+
+def test_workflow_router_approve_planning_blocks_while_execution_is_active():
+    planning_lib = _load_planning_lib()
+    workflow_lib = _load_workflow_lib()
+    workflow_router = _load_workflow_router_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        planning_state_path = Path(tmpdir) / "planning_state.json"
+        execution_state_path = Path(tmpdir) / "state.json"
+
+        planning_state = _rebase_planning_state_paths(
+            planning_lib.build_planning_state("Approve a guarded planning session"),
+            tmpdir,
+        )
+        planning_state = planning_lib.set_planning_status(planning_state, "approval_ready")
+        planning_lib.save_planning_state(planning_state, planning_state_path)
+
+        active_state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        workflow_lib.save_state(active_state, execution_state_path)
+
+        response = workflow_router.approve_current_plan(
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+        persisted_state = workflow_lib.load_state(execution_state_path)
+        planning_state_exists = planning_state_path.exists()
+
+    assert response.status == "blocked"
+    assert planning_state_exists is True
+    assert persisted_state["workflow_name"] == active_state["workflow_name"]
+    assert "resume" in response.message
+    assert "cancel" in response.message
+
+
+def test_workflow_skill_router_wrapper_blocks_execution_activation_while_planning_exists():
+    plan = _example_plan()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        plan_path = Path(tmpdir) / "plan.json"
+        plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+        planning_result = subprocess.run(
+            [sys.executable, str(WORKFLOW_ROUTER_SKILL_SCRIPT_PATH), "--json", "planning-start", "Plan wrapper guardrails"],
+            cwd=tmpdir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert planning_result.returncode == 0, planning_result.stderr
+
+        result = subprocess.run(
+            [sys.executable, str(WORKFLOW_ROUTER_SKILL_SCRIPT_PATH), "--json", "execution-start", str(plan_path)],
+            cwd=tmpdir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert "planning-approve" in payload["message"]
+
+
+def test_user_prompt_hook_blocks_execution_activation_while_planning_exists():
+    workflow_router = _load_workflow_router_lib()
+    user_prompt_hook = _load_user_prompt_hook()
+    plan = _example_plan()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        workflow_root = Path(tmpdir) / ".codex" / "workflow"
+        planning_state_path = workflow_root / "planning_state.json"
+        execution_state_path = workflow_root / "state.json"
+        plan_path = Path(tmpdir) / "plan.json"
+        plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+        workflow_router.start_planning(
+            "Plan a legacy hook guard",
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+
+        request = user_prompt_hook.parse_workflow_request(f"/workflow start {plan_path}")
+        assert request is not None
+
+        original_planning_state_path = user_prompt_hook.DEFAULT_PLANNING_STATE_PATH
+        original_execution_state_path = user_prompt_hook.DEFAULT_STATE_PATH
+        stdout = io.StringIO()
+        try:
+            user_prompt_hook.DEFAULT_PLANNING_STATE_PATH = planning_state_path
+            user_prompt_hook.DEFAULT_STATE_PATH = execution_state_path
+            with contextlib.redirect_stdout(stdout):
+                result_code = user_prompt_hook._handle_execution_activation(request)
+        finally:
+            user_prompt_hook.DEFAULT_PLANNING_STATE_PATH = original_planning_state_path
+            user_prompt_hook.DEFAULT_STATE_PATH = original_execution_state_path
+
+    assert result_code == 0
+    payload = json.loads(stdout.getvalue())
+    assert "blocked" in payload["systemMessage"]
+    assert "planning-approve" in payload["hookSpecificOutput"]["additionalContext"]
+
+
 def test_approve_planning_uses_planning_metrics_root_when_execution_path_differs():
     planning_lib = _load_planning_lib()
     workflow_router = _load_workflow_router_lib()
@@ -1280,6 +1479,177 @@ def test_workflow_state_set_uat_status_failed_replan_transitions_to_replan_requi
     assert uat_artifact["overall_status"] == "failed_replan"
 
 
+def test_workflow_state_set_workflow_status_requires_override_reason_for_manual_change():
+    workflow_lib = _load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["steps"][0]["status"] = "implementing"
+        workflow_lib.save_state(state, state_path)
+
+        missing_reason = subprocess.run(
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-workflow-status",
+                "uat_pending",
+                "--path",
+                str(state_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        state_after_failure = workflow_lib.load_state(state_path)
+
+        override_result = subprocess.run(
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-workflow-status",
+                "uat_pending",
+                "--override-reason",
+                "manual reconciliation for regression coverage",
+                "--path",
+                str(state_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+        events_path = Path(state["metrics_dir"]) / "events.jsonl"
+        events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line]
+
+    assert missing_reason.returncode != 0
+    assert "manual override" in missing_reason.stderr
+    assert state_after_failure["workflow_status"] == "active"
+    assert override_result.returncode == 0, override_result.stderr
+    assert persisted_state["workflow_status"] == "uat_pending"
+    assert [event["event"] for event in events] == ["override_used"]
+
+
+def test_workflow_state_set_workflow_status_complete_requires_ship_pending_and_shipped():
+    workflow_lib = _load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+
+        wrong_status = subprocess.run(
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-workflow-status",
+                "complete",
+                "--path",
+                str(state_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        state["workflow_status"] = "ship_pending"
+        workflow_lib.save_state(state, state_path)
+
+        not_shipped = subprocess.run(
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-workflow-status",
+                "complete",
+                "--path",
+                str(state_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+        metrics_exists = (Path(state["metrics_dir"]) / "events.jsonl").exists()
+
+    assert wrong_status.returncode != 0
+    assert "ship_pending" in wrong_status.stderr
+    assert not_shipped.returncode != 0
+    assert "current step to be shipped" in not_shipped.stderr
+    assert persisted_state["workflow_status"] == "ship_pending"
+    assert metrics_exists is False
+
+
+def test_workflow_state_set_step_status_shipped_requires_ship_pending_and_committed():
+    workflow_lib = _load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        workflow_lib.save_state(state, state_path)
+
+        wrong_status = subprocess.run(
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-step-status",
+                "step-1",
+                "shipped",
+                "--path",
+                str(state_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        state["workflow_status"] = "ship_pending"
+        workflow_lib.save_state(state, state_path)
+        not_committed = subprocess.run(
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-step-status",
+                "step-1",
+                "shipped",
+                "--path",
+                str(state_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert wrong_status.returncode != 0
+    assert "workflow_status ship_pending" in wrong_status.stderr
+    assert not_committed.returncode != 0
+    assert "current step to be committed" in not_committed.stderr
+    assert persisted_state["steps"][0]["status"] == "implementing"
+
+
+def test_next_stop_decision_requires_explicit_completion_after_shipped_step():
+    workflow_lib = _load_workflow_lib()
+    state = workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md")
+    state["workflow_status"] = "ship_pending"
+    state["steps"][0]["status"] = "shipped"
+
+    next_state, decision, changed = workflow_lib.next_stop_decision(state)
+
+    assert changed is False
+    assert next_state["workflow_status"] == "ship_pending"
+    assert decision.action == "block"
+    assert "set-workflow-status complete" in (decision.prompt or "")
+
+
 def test_metrics_scorecard_aggregates_representative_event_sequence():
     metrics_lib = _load_metrics_lib()
 
@@ -1420,6 +1790,8 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
                 str(WORKFLOW_STATE_CLI_PATH),
                 "set-workflow-status",
                 "uat_pending",
+                "--override-reason",
+                "manual workflow-status reconciliation",
                 "--path",
                 str(state_path),
             ],
@@ -1430,6 +1802,15 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
                 "passed",
                 "--summary",
                 "Final UAT passed.",
+                "--path",
+                str(state_path),
+            ],
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-step-status",
+                "step-1",
+                "shipped",
                 "--path",
                 str(state_path),
             ],
@@ -1478,6 +1859,7 @@ def test_workflow_skill_is_scaffolded():
     assert "python3 .agents/skills/workflow/scripts/workflow_router.py planning-start" in skill_text
     assert "python3 .agents/skills/workflow/scripts/workflow_router.py bootstrap-start" in skill_text
     assert "python3 .agents/skills/workflow/scripts/workflow_state.py set-uat-status" in skill_text
+    assert "Deployment begins only after UAT moves the workflow to `ship_pending`." in skill_text
     assert ".codex/workflow/scripts/workflow_router.py" not in skill_text
     assert "Use $workflow" in metadata_text
 
@@ -1487,6 +1869,7 @@ def test_ship_skill_uses_bundled_workflow_state_wrapper():
 
     assert "python3 .agents/skills/ship/scripts/workflow_state.py set-step-status" in skill_text
     assert "ship_pending" in skill_text
+    assert "user explicitly asked to ship anyway" not in skill_text
     assert ".codex/workflow/scripts/workflow_state.py" not in skill_text
 
 
@@ -1496,10 +1879,12 @@ def test_readme_and_next_steps_reflect_new_surface():
 
     assert "bootstrap-start" in readme_text
     assert "set-uat-status" in readme_text
+    assert "set-workflow-status <status> --override-reason" in readme_text
     assert ".codex/workflow/metrics/" in readme_text
-    assert "packaging" in next_steps_text.lower()
-    assert "telemetry polish" in next_steps_text.lower()
-    assert "bootstrap refinements" in next_steps_text.lower()
+    assert "Kernel hardening first is complete" in next_steps_text
+    assert "Strengthen planning audits beyond direct-consumer coverage." in next_steps_text
+    assert "Keep scope to PR shipping only." in next_steps_text
+    assert "Production rollout orchestration." in next_steps_text
     assert "There is still no explicit UAT/gap-closure/replan state machine" not in next_steps_text
 
 
