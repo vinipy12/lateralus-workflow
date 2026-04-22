@@ -1,0 +1,40 @@
+{
+  "workflow_name": "Legacy example rollout",
+  "summary": "Deliver a smaller legacy example plan baseline.",
+  "requirements": [
+    {
+      "id": "R1",
+      "text": "Land one isolated behavior change."
+    }
+  ],
+  "assumptions": [],
+  "open_questions": [],
+  "out_of_scope": [],
+  "steps": [
+    {
+      "id": "step-1",
+      "title": "Legacy isolated slice",
+      "goal": "Land one behavior change in the example module.",
+      "requirement_ids": [
+        "R1"
+      ],
+      "context": [
+        "app/example/module.py"
+      ],
+      "planned_updates": [
+        "app/example/module.py"
+      ],
+      "planned_creates": [],
+      "constraints": [
+        "Keep the change small."
+      ],
+      "done_when": [
+        "The example behavior works."
+      ],
+      "verify_cmds": [
+        "uv run pytest tests/example/test_module.py"
+      ],
+      "commit_message": "feature: legacy isolated slice"
+    }
+  ]
+}

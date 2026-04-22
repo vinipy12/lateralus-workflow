@@ -11,6 +11,7 @@ Use the repo-local `.agents/skills/ship/scripts/workflow_state.py` wrapper when 
 ## Inputs
 
 - Repo-local workflow state: `.codex/workflow/state.json`
+- Repo-local UAT artifact: `.codex/workflow/uat.json`
 - Base branch: from the workflow state, usually `origin/main`
 - Current branch: resolve from git
 
@@ -18,7 +19,7 @@ Use the repo-local `.agents/skills/ship/scripts/workflow_state.py` wrapper when 
 
 1. Inspect `.codex/workflow/state.json` first.
 2. Confirm the workflow is ready to ship:
-   - `workflow_status` is `ship_pending`, or the user explicitly asked to ship anyway
+   - `workflow_status` is `ship_pending`, which means UAT has already passed, or the user explicitly asked to ship anyway
    - the current step is already `committed`
 3. Review branch state locally:
    - confirm the branch name

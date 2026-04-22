@@ -11,12 +11,15 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from metrics_lib import append_metrics_event, ensure_metrics_store
 from workflow_lib import (
     DEFAULT_STATE_PATH,
     _ensure_string_list,
     _looks_like_repo_path,
+    build_uat_artifact,
     build_state_from_plan_spec,
     load_plan_spec,
+    save_uat_artifact,
     save_state,
     validate_plan_spec,
 )
@@ -34,6 +37,8 @@ DEFAULT_PRODUCT_SCOPE_AUDIT_PATH = WORKFLOW_DIR / "product_scope_audit.json"
 DEFAULT_SKEPTIC_AUDIT_PATH = WORKFLOW_DIR / "skeptic_audit.json"
 DEFAULT_CONVERGENCE_SUMMARY_PATH = WORKFLOW_DIR / "convergence_summary.json"
 DEFAULT_PLANNING_TRACE_PATH = WORKFLOW_DIR / "planning_trace.json"
+DEFAULT_STACK_RUNTIME_DECISION_PATH = WORKFLOW_DIR / "stack_runtime_decision.json"
+DEFAULT_BOOTSTRAP_EXPECTATIONS_PATH = WORKFLOW_DIR / "bootstrap_expectations.json"
 DEFAULT_V0_PLAN_BASELINE_PATH = WORKFLOW_DIR / "approved-plan-v0.json"
 DEFAULT_V0_DISCOVERY_BASELINE_PATH = WORKFLOW_DIR / "discovery-dossier-v0.json"
 DEFAULT_PROJECT_MEMORY_PATH = ROOT_DIR / "PROJECT.md"
@@ -61,6 +66,7 @@ VALID_PLANNING_STATUSES = {
     "revising",
     "blocked",
 }
+VALID_PLANNING_MODES = {"brownfield", "greenfield"}
 DIRECT_COVERAGE_KEYWORDS = ("compatib", "consumer", "regression", "preserve")
 DEFAULT_TOUCH_BUDGET = 8
 DEFAULT_CREATE_BUDGET = 4
@@ -99,6 +105,7 @@ def clear_planning_state(path: Path = DEFAULT_PLANNING_STATE_PATH) -> bool:
 def build_planning_state(
     feature_request: str,
     *,
+    planning_mode: str = "brownfield",
     approved_plan_path: str = ".codex/workflow/approved-plan.json",
     context_path: str = ".codex/workflow/context.json",
     discovery_dossier_path: str = ".codex/workflow/discovery_dossier.json",
@@ -107,6 +114,8 @@ def build_planning_state(
     product_scope_audit_path: str = ".codex/workflow/product_scope_audit.json",
     skeptic_audit_path: str = ".codex/workflow/skeptic_audit.json",
     convergence_summary_path: str = ".codex/workflow/convergence_summary.json",
+    stack_runtime_decision_path: str = ".codex/workflow/stack_runtime_decision.json",
+    bootstrap_expectations_path: str = ".codex/workflow/bootstrap_expectations.json",
     planning_trace_path: str = ".codex/workflow/planning_trace.json",
     project_memory_path: str = "PROJECT.md",
     requirements_memory_path: str = "REQUIREMENTS.md",
@@ -115,10 +124,13 @@ def build_planning_state(
     feature_request = str(feature_request).strip()
     if not feature_request:
         raise ValueError("feature_request must be a non-empty string")
+    if planning_mode not in VALID_PLANNING_MODES:
+        raise ValueError(f"invalid planning_mode: {planning_mode}")
 
     return {
         "version": 1,
         "status": "discuss",
+        "planning_mode": planning_mode,
         "feature_request": feature_request,
         "approved_plan_path": approved_plan_path,
         "context_path": context_path,
@@ -128,6 +140,8 @@ def build_planning_state(
         "product_scope_audit_path": product_scope_audit_path,
         "skeptic_audit_path": skeptic_audit_path,
         "convergence_summary_path": convergence_summary_path,
+        "stack_runtime_decision_path": stack_runtime_decision_path,
+        "bootstrap_expectations_path": bootstrap_expectations_path,
         "planning_trace_path": planning_trace_path,
         "project_memory_path": project_memory_path,
         "requirements_memory_path": requirements_memory_path,
@@ -144,6 +158,7 @@ def validate_planning_state(state: dict[str, Any]) -> None:
     required_fields = {
         "version",
         "status",
+        "planning_mode",
         "feature_request",
         "approved_plan_path",
         "context_path",
@@ -153,6 +168,8 @@ def validate_planning_state(state: dict[str, Any]) -> None:
         "product_scope_audit_path",
         "skeptic_audit_path",
         "convergence_summary_path",
+        "stack_runtime_decision_path",
+        "bootstrap_expectations_path",
         "planning_trace_path",
         "project_memory_path",
         "requirements_memory_path",
@@ -171,6 +188,8 @@ def validate_planning_state(state: dict[str, Any]) -> None:
         raise ValueError("planning state version must be 1")
     if state["status"] not in VALID_PLANNING_STATUSES:
         raise ValueError(f"invalid planning status: {state['status']}")
+    if state["planning_mode"] not in VALID_PLANNING_MODES:
+        raise ValueError(f"invalid planning_mode: {state['planning_mode']}")
 
     for field_name in (
         "feature_request",
@@ -182,6 +201,8 @@ def validate_planning_state(state: dict[str, Any]) -> None:
         "product_scope_audit_path",
         "skeptic_audit_path",
         "convergence_summary_path",
+        "stack_runtime_decision_path",
+        "bootstrap_expectations_path",
         "planning_trace_path",
         "project_memory_path",
         "requirements_memory_path",
@@ -217,6 +238,7 @@ def _normalize_planning_state_compat(state: Any, path: Path) -> dict[str, Any]:
     if normalized.get("status") == "intake":
         normalized["status"] = "discuss"
 
+    normalized.setdefault("planning_mode", "brownfield")
     normalized.setdefault("approved_plan_path", _relative_or_source(planning_root / "approved-plan.json"))
     normalized.setdefault("context_path", _relative_or_source(planning_root / "context.json"))
     normalized.setdefault(
@@ -240,6 +262,14 @@ def _normalize_planning_state_compat(state: Any, path: Path) -> dict[str, Any]:
         "convergence_summary_path",
         _relative_or_source(planning_root / "convergence_summary.json"),
     )
+    normalized.setdefault(
+        "stack_runtime_decision_path",
+        _relative_or_source(planning_root / "stack_runtime_decision.json"),
+    )
+    normalized.setdefault(
+        "bootstrap_expectations_path",
+        _relative_or_source(planning_root / "bootstrap_expectations.json"),
+    )
     normalized.setdefault("planning_trace_path", _relative_or_source(planning_root / "planning_trace.json"))
     normalized.setdefault("project_memory_path", _relative_or_source(repo_root / "PROJECT.md"))
     normalized.setdefault("requirements_memory_path", _relative_or_source(repo_root / "REQUIREMENTS.md"))
@@ -261,6 +291,8 @@ def initialize_planning_artifacts(state: dict[str, Any]) -> None:
     product_scope_audit_path = resolve_repo_path(state["product_scope_audit_path"])
     skeptic_audit_path = resolve_repo_path(state["skeptic_audit_path"])
     convergence_summary_path = resolve_repo_path(state["convergence_summary_path"])
+    stack_runtime_decision_path = resolve_repo_path(state["stack_runtime_decision_path"])
+    bootstrap_expectations_path = resolve_repo_path(state["bootstrap_expectations_path"])
     trace_path = resolve_repo_path(state["planning_trace_path"])
     project_memory_path = resolve_repo_path(state["project_memory_path"])
     requirements_memory_path = resolve_repo_path(state["requirements_memory_path"])
@@ -287,6 +319,7 @@ def initialize_planning_artifacts(state: dict[str, Any]) -> None:
         "feature_request": state["feature_request"],
         "current": {
             "requirements": [],
+            "assumptions": [],
             "anti_goals": [],
             "success_criteria": [],
             "entry_points": [],
@@ -343,6 +376,21 @@ def initialize_planning_artifacts(state: dict[str, Any]) -> None:
         "unresolved_risks": [],
         "approval_summary": "",
     }
+    stack_runtime_decision_payload = {
+        "version": 1,
+        "feature_request": state["feature_request"],
+        "runtime_language_choice": "",
+        "framework_choice": "",
+        "storage_choice": "",
+        "rationale": [],
+        "unresolved_questions": [],
+    }
+    bootstrap_expectations_payload = {
+        "version": 1,
+        "feature_request": state["feature_request"],
+        "ci_testing_baseline_expectations": [],
+        "deployment_release_baseline_expectations": [],
+    }
     trace_payload = {
         "version": 1,
         "feature_request": state["feature_request"],
@@ -362,6 +410,9 @@ def initialize_planning_artifacts(state: dict[str, Any]) -> None:
     _write_json(product_scope_audit_path, product_scope_audit_payload)
     _write_json(skeptic_audit_path, skeptic_audit_payload)
     _write_json(convergence_summary_path, convergence_summary_payload)
+    if state["planning_mode"] == "greenfield":
+        _write_json(stack_runtime_decision_path, stack_runtime_decision_payload)
+        _write_json(bootstrap_expectations_path, bootstrap_expectations_payload)
     _write_json(trace_path, trace_payload)
 
     if not project_memory_path.exists():
@@ -518,11 +569,48 @@ def approve_planning(
 
     approved_plan_path = resolve_repo_path(state["approved_plan_path"])
     plan_spec = load_plan_spec(approved_plan_path)
+    execution_root = execution_state_path.resolve().parent
+    metrics_dir = execution_root / "metrics"
+    uat_artifact_path = execution_root / "uat.json"
     execution_state = build_state_from_plan_spec(
         plan_spec,
         plan_path=_relative_or_source(approved_plan_path),
+        uat_artifact_path=str(uat_artifact_path),
+        metrics_dir=str(metrics_dir),
     )
     save_state(execution_state, execution_state_path)
+    save_uat_artifact(
+        build_uat_artifact(
+            plan_spec,
+            workflow_name=execution_state["workflow_name"],
+            plan_path=execution_state["plan_path"],
+            project_memory_path=state["project_memory_path"],
+            requirements_memory_path=state["requirements_memory_path"],
+            state_memory_path=state["state_memory_path"],
+        ),
+        uat_artifact_path,
+    )
+    ensure_metrics_store(metrics_dir)
+    append_metrics_event(
+        metrics_dir,
+        "planning_approved",
+        details={
+            "feature_request": state["feature_request"],
+            "planning_mode": state["planning_mode"],
+            "workflow_name": execution_state["workflow_name"],
+            "plan_path": execution_state["plan_path"],
+        },
+    )
+    append_metrics_event(
+        metrics_dir,
+        "execution_activated",
+        details={
+            "workflow_name": execution_state["workflow_name"],
+            "workflow_status": execution_state["workflow_status"],
+            "mode": execution_state["mode"],
+            "plan_path": execution_state["plan_path"],
+        },
+    )
     append_trace_event(state, "plan_approved", "approved plan ingested into execution state")
     clear_planning_state(planning_state_path)
     return execution_state
@@ -558,6 +646,7 @@ def planning_activation_prompt(state: dict[str, Any], *, revision_mode: bool = F
         "Plan-phase rules:\n"
         "- Do not write implementation code.\n"
         "- Treat `$workflow` as the canonical entrypoint; the legacy `/workflow` hook is compatibility-only.\n"
+        "- Use `bootstrap-start` only for greenfield work; keep normal feature planning on `planning-start`.\n"
         "- `$workflow <feature request>` starts with discuss automatically; do not skip discuss.\n"
         "- Root `AGENTS.md` must be read before scoped discovery, then load only the relevant `AGENTS.md` files.\n"
         "- Ask at most 3 clarification questions, only when ambiguity would materially change architecture, scope, or verification.\n"
@@ -569,6 +658,7 @@ def planning_activation_prompt(state: dict[str, Any], *, revision_mode: bool = F
         "- Feature plans must stay aligned with repo memory and must not re-introduce items listed as deferred scope.\n"
         "- Each step in the approved plan must include justification, files_read_first, interfaces_to_preserve, avoid_touching, and verification_targets.\n"
         "- Each step should declare wave, file ownership, dependency edges, and rollback/watchpoint notes when the blast radius warrants them.\n"
+        "- Execution now includes a UAT gate before ship and writes local telemetry under `.codex/workflow/metrics/`; plan the milestone so those artifacts stay auditable.\n"
         "- Any step that claims compatibility or verification across discovered entry points must include the "
         "direct consumer tests implied by that blast radius, not just a broad end-to-end check.\n"
         "- Prefer the smallest sufficient design and reject speculative abstractions or generic frameworks unless the milestone truly needs them.\n"
@@ -591,6 +681,8 @@ def render_planning_status(state: dict[str, Any]) -> str:
     product_scope_audit_exists = resolve_repo_path(state["product_scope_audit_path"]).exists()
     skeptic_audit_exists = resolve_repo_path(state["skeptic_audit_path"]).exists()
     convergence_exists = resolve_repo_path(state["convergence_summary_path"]).exists()
+    stack_runtime_decision_exists = resolve_repo_path(state["stack_runtime_decision_path"]).exists()
+    bootstrap_expectations_exists = resolve_repo_path(state["bootstrap_expectations_path"]).exists()
     trace_exists = resolve_repo_path(state["planning_trace_path"]).exists()
     project_memory_exists = resolve_repo_path(state["project_memory_path"]).exists()
     requirements_memory_exists = resolve_repo_path(state["requirements_memory_path"]).exists()
@@ -599,6 +691,7 @@ def render_planning_status(state: dict[str, Any]) -> str:
 
     return (
         f"Plan status: `{state['status']}`\n"
+        f"Planning mode: `{state['planning_mode']}`\n"
         f"Phase checkpoint: `{phase_name}`\n"
         f"Feature request: {state['feature_request']}\n"
         f"Approved plan artifact: `{state['approved_plan_path']}` ({_present(approved_exists)})\n"
@@ -609,6 +702,8 @@ def render_planning_status(state: dict[str, Any]) -> str:
         f"Product scope audit: `{state['product_scope_audit_path']}` ({_present(product_scope_audit_exists)})\n"
         f"Skeptic audit: `{state['skeptic_audit_path']}` ({_present(skeptic_audit_exists)})\n"
         f"Convergence summary: `{state['convergence_summary_path']}` ({_present(convergence_exists)})\n"
+        f"Stack/runtime decision: `{state['stack_runtime_decision_path']}` ({_present(stack_runtime_decision_exists)})\n"
+        f"Bootstrap expectations: `{state['bootstrap_expectations_path']}` ({_present(bootstrap_expectations_exists)})\n"
         f"Planning trace: `{state['planning_trace_path']}` ({_present(trace_exists)})\n"
         f"Project memory: `{state['project_memory_path']}` ({_present(project_memory_exists)})\n"
         f"Requirements memory: `{state['requirements_memory_path']}` ({_present(requirements_memory_exists)})\n"
@@ -625,7 +720,9 @@ def execution_status_summary(state: dict[str, Any]) -> str:
         f"Workflow status: `{state['workflow_status']}`\n"
         f"Current step: `{step['id']}` - {step['title']}\n"
         f"Current step status: `{step['status']}`\n"
-        f"Plan source: `{state['plan_path']}`"
+        f"Plan source: `{state['plan_path']}`\n"
+        f"UAT artifact: `{state['uat_artifact_path']}`\n"
+        f"Metrics dir: `{state['metrics_dir']}`"
     )
 
 
@@ -1565,9 +1662,16 @@ def render_plan_comparison(comparison: dict[str, Any], *, baseline_label: str, c
 
 
 def _planning_phase_header(state: dict[str, Any], phase_name: str) -> str:
+    bootstrap_lines = ""
+    if state["planning_mode"] == "greenfield":
+        bootstrap_lines = (
+            f"Stack/runtime decision: `{state['stack_runtime_decision_path']}`\n"
+            f"Bootstrap expectations: `{state['bootstrap_expectations_path']}`\n"
+        )
     return (
         f"Feature request:\n{state['feature_request']}\n\n"
         f"Planning status: `{state['status']}`\n"
+        f"Planning mode: `{state['planning_mode']}`\n"
         f"Phase checkpoint: `{phase_name}`\n"
         f"Approved plan output: `{state['approved_plan_path']}`\n"
         f"Context artifact: `{state['context_path']}`\n"
@@ -1577,6 +1681,7 @@ def _planning_phase_header(state: dict[str, Any], phase_name: str) -> str:
         f"Product scope audit: `{state['product_scope_audit_path']}`\n"
         f"Skeptic audit: `{state['skeptic_audit_path']}`\n"
         f"Convergence summary: `{state['convergence_summary_path']}`\n"
+        f"{bootstrap_lines}"
         f"Project memory: `{state['project_memory_path']}`\n"
         f"Requirements memory: `{state['requirements_memory_path']}`\n"
         f"Project state memory: `{state['state_memory_path']}`\n"
@@ -1585,7 +1690,16 @@ def _planning_phase_header(state: dict[str, Any], phase_name: str) -> str:
 
 
 def _planning_phase_contract(state: dict[str, Any], *, phase_name: str) -> str:
+    planning_mode = state["planning_mode"]
     if phase_name == "discuss":
+        if planning_mode == "greenfield":
+            return (
+                "Current phase contract:\n"
+                "- Inputs: project request plus `PROJECT.md`, `REQUIREMENTS.md`, and `STATE.md`.\n"
+                "- Output: `context.json` with product intent, target users, desired behavior, scope boundaries, defaults, non-goals, and baseline success criteria.\n"
+                "- Allowed work: establish greenfield intent and baseline goals only; do not start architecture or plan drafting yet.\n"
+                f"- When discuss outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance discovery`.\n"
+            )
         return (
             "Current phase contract:\n"
             "- Inputs: feature request plus `PROJECT.md`, `REQUIREMENTS.md`, and `STATE.md`.\n"
@@ -1594,6 +1708,14 @@ def _planning_phase_contract(state: dict[str, Any], *, phase_name: str) -> str:
             f"- When discuss outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance discovery`.\n"
         )
     if phase_name == "discovery":
+        if planning_mode == "greenfield":
+            return (
+                "Current phase contract:\n"
+                "- Inputs: validated `context.json` plus the repo memory docs.\n"
+                "- Output: `discovery_dossier.json` with initial requirements, greenfield constraints, assumptions, baseline verification anchors, and open questions.\n"
+                "- Allowed work: describe greenfield constraints and initial assumptions; do not map a fake brownfield blast radius.\n"
+                f"- When discovery outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance architecture_audit`.\n"
+            )
         return (
             "Current phase contract:\n"
             "- Inputs: validated `context.json` plus the repo memory docs.\n"
@@ -1602,6 +1724,14 @@ def _planning_phase_contract(state: dict[str, Any], *, phase_name: str) -> str:
             f"- When discovery outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance architecture_audit`.\n"
         )
     if phase_name == "architecture_audit":
+        if planning_mode == "greenfield":
+            return (
+                "Current phase contract:\n"
+                "- Inputs: validated discuss and discovery artifacts.\n"
+                "- Outputs: `architecture_constraints.json` plus `stack_runtime_decision.json` capturing runtime, framework, storage, rationale, and unresolved questions.\n"
+                "- Allowed work: define stack and architecture guardrails only; do not draft the executable plan here.\n"
+                f"- When architecture outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance planning`.\n"
+            )
         return (
             "Current phase contract:\n"
             "- Inputs: validated discuss and discovery artifacts.\n"
@@ -1610,6 +1740,14 @@ def _planning_phase_contract(state: dict[str, Any], *, phase_name: str) -> str:
             f"- When architecture outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance planning`.\n"
         )
     if phase_name == "planning":
+        if planning_mode == "greenfield":
+            return (
+                "Current phase contract:\n"
+                "- Inputs: validated context, discovery, architecture constraints, stack/runtime decision, and repo memory.\n"
+                "- Outputs: `approved-plan.json` draft plus `scope_contract.json` and the initial repo-memory docs needed to execute the baseline build.\n"
+                "- Allowed work: produce the first executable bootstrap plan and repo-memory baseline; do not skip scope pressure or skeptic review.\n"
+                f"- When the plan draft validates, run `{PLANNING_STATE_TOOL_COMMAND} advance product_scope_audit`.\n"
+            )
         return (
             "Current phase contract:\n"
             "- Inputs: validated context, discovery, architecture constraints, and repo memory.\n"
@@ -1634,6 +1772,15 @@ def _planning_phase_contract(state: dict[str, Any], *, phase_name: str) -> str:
             f"- When the skeptic audit passes, run `{PLANNING_STATE_TOOL_COMMAND} advance convergence`.\n"
         )
     if phase_name == "convergence":
+        if planning_mode == "greenfield":
+            return (
+                "Current phase contract:\n"
+                "- Inputs: validated plan draft, product scope audit, skeptic audit, repo memory, and `bootstrap_expectations.json`.\n"
+                "- Output: `convergence_summary.json` with included scope, deferred scope, defaults taken, unresolved risks, and the approval summary.\n"
+                "- Allowed work: merge the prior phases into one bootstrap-ready package and make sure CI/testing and deployment/release expectations are explicit.\n"
+                f"- Before approval readiness, run `{PLANNING_STATE_TOOL_COMMAND} audit-plan` and fix every reported issue.\n"
+                f"- When convergence outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance approval_ready`.\n"
+            )
         return (
             "Current phase contract:\n"
             "- Inputs: validated plan draft, product scope audit, skeptic audit, and repo memory.\n"
@@ -1699,6 +1846,17 @@ def _validate_discovery_phase(state: dict[str, Any]) -> list[str]:
         issues.append("discovery phase requires current.requirements")
     if not _artifact_string_list(current.get("success_criteria")):
         issues.append("discovery phase requires current.success_criteria")
+    if state["planning_mode"] == "greenfield":
+        if not _artifact_string_list(current.get("assumptions")):
+            issues.append("greenfield discovery phase requires current.assumptions")
+        if not any(
+            _artifact_string_list(current.get(field_name))
+            for field_name in ("blast_radius", "verification_anchors", "open_questions", "complexity_events")
+        ):
+            issues.append(
+                "greenfield discovery phase requires at least one constraint, verification anchor, open question, or complexity event"
+            )
+        return issues
     anchors = []
     for field_name in ("entry_points", "pattern_anchors", "verification_anchors"):
         anchors.extend(_artifact_string_list(current.get(field_name)))
@@ -1716,6 +1874,12 @@ def _validate_architecture_audit_phase(state: dict[str, Any]) -> list[str]:
         "architecture constraints",
     )
     issues.extend(_audit_architecture_constraints(architecture_constraints))
+    if state["planning_mode"] == "greenfield":
+        issues.extend(
+            _validate_stack_runtime_decision(
+                resolve_repo_path(state["stack_runtime_decision_path"])
+            )
+        )
     return issues
 
 
@@ -1791,12 +1955,45 @@ def _validate_convergence_phase(state: dict[str, Any]) -> list[str]:
         issues.append("convergence phase requires defaults_taken")
     if not _artifact_non_empty_string(convergence_summary.get("approval_summary")):
         issues.append("convergence phase requires approval_summary")
+    if state["planning_mode"] == "greenfield":
+        issues.extend(
+            _validate_bootstrap_expectations(
+                resolve_repo_path(state["bootstrap_expectations_path"])
+            )
+        )
     return issues
 
 
 def _validate_approval_ready_phase(state: dict[str, Any]) -> list[str]:
     issues = _validate_convergence_phase(state)
     issues.extend(audit_planning_artifacts(state))
+    return issues
+
+
+def _validate_stack_runtime_decision(path: Path) -> list[str]:
+    artifact = _load_required_artifact(path, "stack/runtime decision")
+    issues: list[str] = []
+    for field_name in ("runtime_language_choice", "framework_choice", "storage_choice"):
+        if not _artifact_non_empty_string(artifact.get(field_name)):
+            issues.append(f"greenfield architecture_audit phase requires {field_name}")
+    if not _artifact_string_list(artifact.get("rationale")):
+        issues.append("greenfield architecture_audit phase requires rationale")
+    if not isinstance(artifact.get("unresolved_questions"), list):
+        issues.append("greenfield architecture_audit phase requires unresolved_questions")
+    return issues
+
+
+def _validate_bootstrap_expectations(path: Path) -> list[str]:
+    artifact = _load_required_artifact(path, "bootstrap expectations")
+    issues: list[str] = []
+    if not _artifact_string_list(artifact.get("ci_testing_baseline_expectations")):
+        issues.append(
+            "greenfield convergence phase requires ci_testing_baseline_expectations"
+        )
+    if not _artifact_string_list(artifact.get("deployment_release_baseline_expectations")):
+        issues.append(
+            "greenfield convergence phase requires deployment_release_baseline_expectations"
+        )
     return issues
 
 
@@ -2166,9 +2363,8 @@ def _default_project_memory() -> str:
 - Stabilize the workflow kernel before revisiting packaging or distribution shape.
 
 ## Current Priorities
-- Enforce planning phases as code.
-- Add repo-root project memory.
-- Make approved plans orchestration-ready.
+- Keep the UAT gate, telemetry artifacts, and bootstrap path auditable.
+- Revisit packaging only after the kernel milestone stays stable.
 """
 
 
@@ -2176,22 +2372,21 @@ def _default_requirements_memory() -> str:
     return """# Requirements
 
 ## Active Backlog
-- Enforce hard planning phase gates with deterministic transitions.
-- Add repo-root project memory that planning can read and audit.
-- Extend the approved plan schema with orchestration metadata.
+- Keep the UAT gate, telemetry artifacts, and bootstrap path stable.
+- Revisit packaging and distribution shape after kernel validation.
 
 ## Accepted Requirements
 - Approved plans must pass audit before execution starts.
-- Execution must preserve review and ship gates.
+- Execution must preserve review, UAT, and ship gates.
 - Parallel-ready plans must declare ownership and dependency metadata.
 
 ## Deferred Scope
-- Post-implementation UAT and gap-closure loops.
-- Local telemetry scorecards.
-- Greenfield bootstrap mode.
+- Packaging and distribution revisit.
+- Additional telemetry polish beyond the local scorecard.
+- Additional bootstrap refinements beyond the current router path.
 
 ## Milestone Commitments
-- Land hard phase gates, repo memory, and orchestration metadata together before broader packaging work.
+- Keep the kernel local, auditable, and ready for broader packaging only after the control loops stay stable.
 """
 
 
@@ -2202,15 +2397,15 @@ def _default_state_memory() -> str:
 - Kernel upgrade in progress.
 
 ## Active Initiative
-- Hard planning gates, repo memory, and orchestration-ready plans.
+- UAT, telemetry, and bootstrap kernel stabilization.
 
 ## Latest Decisions
-- Treat execution handoff metadata as part of the kernel.
+- Treat execution handoff metadata, UAT, and telemetry as part of the kernel.
 - Keep `$workflow` as the primary interface and `$ship` as the terminal publish skill.
 
 ## Release State
 - Pre-kernel-stabilization.
 
 ## Unresolved Risks
-- UAT, telemetry, and bootstrap mode remain intentionally deferred until the kernel milestone is stable.
+- Packaging shape is still deferred until the kernel stays stable.
 """

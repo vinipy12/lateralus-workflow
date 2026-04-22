@@ -67,6 +67,8 @@ def main() -> int:
         return _handle_execution_activation(request)
     if request.action == "start_planning":
         return _handle_start_planning(request)
+    if request.action == "start_bootstrap":
+        return _handle_start_bootstrap(request)
     if request.action == "revise_planning":
         return _handle_revise_planning(request)
     if request.action == "approve_planning":
@@ -82,6 +84,7 @@ def main() -> int:
                 "Treat the user's prompt as a legacy workflow usage error. Explain that `$workflow` is now the "
                 "canonical path, and that `/workflow` remains a compatibility shim. Supported legacy commands:\n"
                 "- `/workflow <feature request>` to start planning\n"
+                "- `/workflow bootstrap <project request>` to start greenfield bootstrap planning\n"
                 "- `/workflow revise <feedback>` to revise the active plan\n"
                 "- `/workflow approve` to transition from plan to execution\n"
                 "- `/workflow status` to report the active workflow state\n"
@@ -120,6 +123,9 @@ def parse_workflow_request(prompt: str) -> WorkflowRequest | None:
         return WorkflowRequest(action="status")
     if parts[1] == "cancel":
         return WorkflowRequest(action="cancel")
+    if parts[1] == "bootstrap":
+        feature_request = command_body[len("bootstrap") :].strip() or None
+        return WorkflowRequest(action="start_bootstrap", feature_request=feature_request)
     if parts[1] == "revise":
         feedback = command_body[len("revise") :].strip() or None
         return WorkflowRequest(action="revise_planning", feedback=feedback)
@@ -218,6 +224,17 @@ def _handle_execution_activation(request: WorkflowRequest) -> int:
 def _handle_start_planning(request: WorkflowRequest) -> int:
     response = start_planning(
         request.feature_request,
+        planning_mode="brownfield",
+        planning_state_path=DEFAULT_PLANNING_STATE_PATH,
+        execution_state_path=DEFAULT_STATE_PATH,
+    )
+    return _print_response(response.message, response.additional_context)
+
+
+def _handle_start_bootstrap(request: WorkflowRequest) -> int:
+    response = start_planning(
+        request.feature_request,
+        planning_mode="greenfield",
         planning_state_path=DEFAULT_PLANNING_STATE_PATH,
         execution_state_path=DEFAULT_STATE_PATH,
     )

@@ -33,6 +33,11 @@ def main() -> int:
     start_parser.add_argument("--planning-state-path", type=Path, default=None)
     start_parser.add_argument("--execution-state-path", type=Path, default=None)
 
+    bootstrap_parser = subparsers.add_parser("bootstrap-start", help="Start a new greenfield bootstrap planning session.")
+    bootstrap_parser.add_argument("feature_request")
+    bootstrap_parser.add_argument("--planning-state-path", type=Path, default=None)
+    bootstrap_parser.add_argument("--execution-state-path", type=Path, default=None)
+
     revise_parser = subparsers.add_parser("planning-revise", help="Revise the active planning session.")
     revise_parser.add_argument("feedback")
     revise_parser.add_argument("--planning-state-path", type=Path, default=None)
@@ -72,6 +77,14 @@ def main() -> int:
     if args.command == "planning-start":
         response = start_planning(
             args.feature_request,
+            planning_mode="brownfield",
+            planning_state_path=planning_state_path or Path(".codex/workflow/planning_state.json"),
+            execution_state_path=execution_state_path or Path(".codex/workflow/state.json"),
+        )
+    elif args.command == "bootstrap-start":
+        response = start_planning(
+            args.feature_request,
+            planning_mode="greenfield",
             planning_state_path=planning_state_path or Path(".codex/workflow/planning_state.json"),
             execution_state_path=execution_state_path or Path(".codex/workflow/state.json"),
         )

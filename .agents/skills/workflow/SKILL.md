@@ -12,6 +12,7 @@ Use this skill as the native entrypoint for the repo-local workflow engine.
 Prefer the repo-local wrapper CLI over editing workflow JSON by hand:
 
 - `python3 .agents/skills/workflow/scripts/workflow_router.py planning-start "<feature request>"`
+- `python3 .agents/skills/workflow/scripts/workflow_router.py bootstrap-start "<project request>"`
 - `python3 .agents/skills/workflow/scripts/workflow_router.py planning-revise "<feedback>"`
 - `python3 .agents/skills/workflow/scripts/workflow_router.py planning-approve`
 - `python3 .agents/skills/workflow/scripts/workflow_router.py execution-start [plan-file]`
@@ -37,6 +38,13 @@ For a new feature request:
 6. Before approval, run `python3 .agents/skills/workflow/scripts/planning_state.py audit-plan`.
 7. When the plan is ready, use `planning-approve` to transition into execution.
 
+For greenfield/bootstrap work:
+
+1. Run `bootstrap-start "<project request>"`.
+2. Stay on the same planning phases, but produce `stack_runtime_decision.json` during `architecture_audit`.
+3. Produce `bootstrap_expectations.json` before `approval_ready`.
+4. Keep the bootstrap plan JSON-first and auditable like the brownfield path.
+
 For plan revisions:
 
 1. Run `planning-revise "<feedback>"`.
@@ -49,7 +57,8 @@ For an active execution workflow:
 
 1. Run `resume` to load the exact next instruction for the current step.
 2. Use `python3 .agents/skills/workflow/scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
-3. When the workflow reaches ship, use `$ship`.
+3. Record UAT outcomes with `python3 .agents/skills/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`.
+4. When the workflow reaches ship, use `$ship`.
 
 For direct activation from an approved plan artifact:
 
@@ -67,6 +76,7 @@ For direct activation from an approved plan artifact:
 - Treat `$workflow` as the canonical UX. `/workflow` is a legacy hook-based compatibility path.
 - Read `AGENTS.md` before acting on execution steps.
 - Keep planning JSON-first and execution stepwise.
+- Treat `.codex/workflow/metrics/` and `.codex/workflow/uat.json` as auditable local artifacts, not scratch files.
 - Respect phase ownership:
   - planning updates `PROJECT.md` only when product intent or durable constraints change
   - planning updates `REQUIREMENTS.md` when scope or backlog commitments change

@@ -1,6 +1,7 @@
 {
   "version": 1,
   "status": "planning",
+  "planning_mode": "brownfield",
   "feature_request": "Add a planning workflow that produces an approval-ready implementation plan before any code changes.",
   "approved_plan_path": ".codex/workflow/approved-plan.json",
   "context_path": ".codex/workflow/context.json",
@@ -10,6 +11,8 @@
   "product_scope_audit_path": ".codex/workflow/product_scope_audit.json",
   "skeptic_audit_path": ".codex/workflow/skeptic_audit.json",
   "convergence_summary_path": ".codex/workflow/convergence_summary.json",
+  "stack_runtime_decision_path": ".codex/workflow/stack_runtime_decision.json",
+  "bootstrap_expectations_path": ".codex/workflow/bootstrap_expectations.json",
   "planning_trace_path": ".codex/workflow/planning_trace.json",
   "project_memory_path": "PROJECT.md",
   "requirements_memory_path": "REQUIREMENTS.md",

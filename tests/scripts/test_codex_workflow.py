@@ -15,9 +15,13 @@ WORKFLOW_LIB_PATH = WORKFLOW_SCRIPTS_DIR / "workflow_lib.py"
 PLANNING_LIB_PATH = WORKFLOW_SCRIPTS_DIR / "planning_lib.py"
 USER_PROMPT_HOOK_PATH = WORKFLOW_SCRIPTS_DIR / "user_prompt_hook.py"
 WORKFLOW_ROUTER_LIB_PATH = WORKFLOW_SCRIPTS_DIR / "workflow_router_lib.py"
+WORKFLOW_STATE_CLI_PATH = WORKFLOW_SCRIPTS_DIR / "workflow_state.py"
+METRICS_LIB_PATH = WORKFLOW_SCRIPTS_DIR / "metrics_lib.py"
 STATE_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "state.example.json"
 PLANNING_STATE_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "planning_state.example.json"
 PLAN_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "plan.example.json"
+README_PATH = REPO_ROOT / "README.md"
+NEXT_STEPS_PATH = REPO_ROOT / "next-steps.md"
 WORKFLOW_SKILL_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "SKILL.md"
 WORKFLOW_SKILL_OPENAI_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "agents" / "openai.yaml"
 WORKFLOW_ROUTER_SKILL_SCRIPT_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "scripts" / "workflow_router.py"
@@ -55,6 +59,10 @@ def _load_user_prompt_hook():
 
 def _load_workflow_router_lib():
     return _load_module("codex_workflow_router_lib", WORKFLOW_ROUTER_LIB_PATH)
+
+
+def _load_metrics_lib():
+    return _load_module("codex_metrics_lib", METRICS_LIB_PATH)
 
 
 def _example_plan() -> dict:
@@ -298,11 +306,56 @@ def _rebase_planning_state_paths(state: dict, tmpdir: str) -> dict:
     rebased["product_scope_audit_path"] = str(tmp_root / "product_scope_audit.json")
     rebased["skeptic_audit_path"] = str(tmp_root / "skeptic_audit.json")
     rebased["convergence_summary_path"] = str(tmp_root / "convergence_summary.json")
+    rebased["stack_runtime_decision_path"] = str(tmp_root / "stack_runtime_decision.json")
+    rebased["bootstrap_expectations_path"] = str(tmp_root / "bootstrap_expectations.json")
     rebased["planning_trace_path"] = str(tmp_root / "planning_trace.json")
     rebased["project_memory_path"] = str(tmp_root / "PROJECT.md")
     rebased["requirements_memory_path"] = str(tmp_root / "REQUIREMENTS.md")
     rebased["state_memory_path"] = str(tmp_root / "STATE.md")
     return rebased
+
+
+def _rebase_execution_state_paths(state: dict, tmpdir: str) -> dict:
+    tmp_root = Path(tmpdir)
+    rebased = deepcopy(state)
+    rebased["uat_artifact_path"] = str(tmp_root / "uat.json")
+    rebased["metrics_dir"] = str(tmp_root / "metrics")
+    return rebased
+
+
+def _write_greenfield_planning_artifacts(state: dict) -> None:
+    Path(state["stack_runtime_decision_path"]).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "feature_request": state["feature_request"],
+                "runtime_language_choice": "Python 3.13",
+                "framework_choice": "Repo-local CLI scripts",
+                "storage_choice": "JSON artifacts on disk",
+                "rationale": [
+                    "Match the existing workflow kernel runtime.",
+                    "Keep the bootstrap deterministic and auditable.",
+                ],
+                "unresolved_questions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    Path(state["bootstrap_expectations_path"]).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "feature_request": state["feature_request"],
+                "ci_testing_baseline_expectations": [
+                    "Focused pytest coverage must exist before approval.",
+                ],
+                "deployment_release_baseline_expectations": [
+                    "Shipping must still go through the repo-local publish flow.",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_example_state_is_valid():
@@ -323,10 +376,13 @@ def test_build_planning_state_starts_in_discuss():
     state = planning_lib.build_planning_state("Plan an improved workflow")
 
     assert state["status"] == "discuss"
+    assert state["planning_mode"] == "brownfield"
     assert state["phase_checkpoint"] == "discuss"
     assert state["context_path"].endswith("context.json")
     assert state["scope_contract_path"].endswith("scope_contract.json")
     assert state["architecture_constraints_path"].endswith("architecture_constraints.json")
+    assert state["stack_runtime_decision_path"].endswith("stack_runtime_decision.json")
+    assert state["bootstrap_expectations_path"].endswith("bootstrap_expectations.json")
     assert state["project_memory_path"] == "PROJECT.md"
     assert state["requirements_memory_path"] == "REQUIREMENTS.md"
     assert state["state_memory_path"] == "STATE.md"
@@ -364,10 +420,13 @@ def test_load_planning_state_backfills_v0_paths():
     assert state["product_scope_audit_path"].endswith("product_scope_audit.json")
     assert state["skeptic_audit_path"].endswith("skeptic_audit.json")
     assert state["convergence_summary_path"].endswith("convergence_summary.json")
+    assert state["stack_runtime_decision_path"].endswith("stack_runtime_decision.json")
+    assert state["bootstrap_expectations_path"].endswith("bootstrap_expectations.json")
     assert state["project_memory_path"].endswith("PROJECT.md")
     assert state["requirements_memory_path"].endswith("REQUIREMENTS.md")
     assert state["state_memory_path"].endswith("STATE.md")
     assert state["phase_checkpoint"] == "approval_ready"
+    assert state["planning_mode"] == "brownfield"
 
 
 def test_planning_phase_advance_rejects_incomplete_discuss_outputs():
@@ -462,6 +521,8 @@ def test_example_plan_builds_valid_state():
         "app/example/second_module.py",
         "tests/example/test_second_module.py",
     ]
+    assert state["uat_artifact_path"] == ".codex/workflow/uat.json"
+    assert state["metrics_dir"] == ".codex/workflow/metrics"
 
 
 def test_plan_inference_adds_relevant_agents_paths():
@@ -539,19 +600,109 @@ def test_activation_prompt_renders_execution_handoff_fields():
     assert "Update `STATE.md`" in prompt
 
 
-def test_final_committed_step_enters_ship_pending_mode():
+def test_final_committed_step_enters_uat_pending_mode():
     workflow_lib = _load_workflow_lib()
     state = json.loads(STATE_EXAMPLE_PATH.read_text(encoding="utf-8"))
     state["current_step_id"] = "step-2"
     state["steps"][0]["status"] = "committed"
     state["steps"][1]["status"] = "committed"
+    state["uat_artifact_path"] = str(REPO_ROOT / ".codex" / "workflow" / "uat.json")
 
     new_state, decision, changed = workflow_lib.next_stop_decision(deepcopy(state))
 
     assert changed is True
-    assert new_state["workflow_status"] == "ship_pending"
+    assert new_state["workflow_status"] == "uat_pending"
     assert decision.action == "block"
-    assert "$ship" in decision.prompt
+    assert "set-uat-status passed" in decision.prompt
+
+
+def test_uat_pending_blocks_with_uat_prompt():
+    workflow_lib = _load_workflow_lib()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["workflow_status"] = "uat_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_uat_artifact(
+            workflow_lib.build_uat_artifact(
+                _example_plan(),
+                workflow_name=state["workflow_name"],
+                plan_path=state["plan_path"],
+                project_memory_path="PROJECT.md",
+                requirements_memory_path="REQUIREMENTS.md",
+                state_memory_path="STATE.md",
+            ),
+            Path(state["uat_artifact_path"]),
+        )
+
+        _, decision, changed = workflow_lib.next_stop_decision(deepcopy(state))
+
+    assert changed is False
+    assert "user-acceptance gate" in decision.prompt
+    assert "set-uat-status failed-gap" in decision.prompt
+
+
+def test_gap_closure_pending_returns_to_uat_after_fix_commit():
+    workflow_lib = _load_workflow_lib()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["workflow_status"] = "gap_closure_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_uat_artifact(
+            workflow_lib.build_uat_artifact(
+                _example_plan(),
+                workflow_name=state["workflow_name"],
+                plan_path=state["plan_path"],
+                project_memory_path="PROJECT.md",
+                requirements_memory_path="REQUIREMENTS.md",
+                state_memory_path="STATE.md",
+            ),
+            Path(state["uat_artifact_path"]),
+        )
+
+        new_state, decision, changed = workflow_lib.next_stop_decision(deepcopy(state))
+
+    assert changed is True
+    assert new_state["workflow_status"] == "uat_pending"
+    assert "set-uat-status passed" in decision.prompt
+
+
+def test_replan_required_blocks_with_follow_up_planning_prompt():
+    workflow_lib = _load_workflow_lib()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["workflow_status"] = "replan_required"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_uat_artifact(
+            workflow_lib.build_uat_artifact(
+                _example_plan(),
+                workflow_name=state["workflow_name"],
+                plan_path=state["plan_path"],
+                project_memory_path="PROJECT.md",
+                requirements_memory_path="REQUIREMENTS.md",
+                state_memory_path="STATE.md",
+            ),
+            Path(state["uat_artifact_path"]),
+        )
+        workflow_lib.update_uat_artifact_result(
+            Path(state["uat_artifact_path"]),
+            "failed_replan",
+            "The approved architecture no longer matches the required scope.",
+        )
+
+        _, decision, changed = workflow_lib.next_stop_decision(deepcopy(state))
+
+    assert changed is False
+    assert "cannot ship" in decision.prompt
+    assert "follow-up planning session" in decision.prompt
 
 
 def test_markdown_plan_file_can_be_selected_by_plan_id():
@@ -649,6 +800,16 @@ def test_user_prompt_hook_parses_planning_request():
     assert request.feature_request == "add a planning phase for feature delivery"
 
 
+def test_user_prompt_hook_parses_bootstrap_request():
+    user_prompt_hook = _load_user_prompt_hook()
+
+    request = user_prompt_hook.parse_workflow_request("/workflow bootstrap build a new greenfield workflow kernel")
+
+    assert request is not None
+    assert request.action == "start_bootstrap"
+    assert request.feature_request == "build a new greenfield workflow kernel"
+
+
 def test_user_prompt_hook_parses_revise_request():
     user_prompt_hook = _load_user_prompt_hook()
 
@@ -673,22 +834,77 @@ def test_workflow_router_start_planning_creates_artifacts():
         )
 
         state = json.loads(planning_state_path.read_text(encoding="utf-8"))
+        metrics_dir = Path(tmpdir) / "metrics"
+        scorecard = json.loads((metrics_dir / "scorecard.json").read_text(encoding="utf-8"))
         context_exists = Path(state["context_path"]).exists()
         scope_exists = Path(state["scope_contract_path"]).exists()
         architecture_exists = Path(state["architecture_constraints_path"]).exists()
         project_memory_exists = Path(state["project_memory_path"]).exists()
         requirements_memory_exists = Path(state["requirements_memory_path"]).exists()
         state_memory_exists = Path(state["state_memory_path"]).exists()
+        metrics_events_exist = (metrics_dir / "events.jsonl").exists()
+        metrics_scorecard_exist = (metrics_dir / "scorecard.json").exists()
 
     assert response.status == "ok"
     assert response.mode == "planning"
     assert state["status"] == "discuss"
+    assert state["planning_mode"] == "brownfield"
     assert context_exists is True
     assert scope_exists is True
     assert architecture_exists is True
     assert project_memory_exists is True
     assert requirements_memory_exists is True
     assert state_memory_exists is True
+    assert metrics_events_exist is True
+    assert metrics_scorecard_exist is True
+    assert scorecard["counts"]["planning_started"] == 1
+
+
+def test_workflow_router_bootstrap_start_creates_greenfield_artifacts():
+    workflow_router = _load_workflow_router_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        planning_state_path = Path(tmpdir) / "planning_state.json"
+        execution_state_path = Path(tmpdir) / "state.json"
+
+        response = workflow_router.start_planning(
+            "Bootstrap a new workflow-first project",
+            planning_mode="greenfield",
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+
+        state = json.loads(planning_state_path.read_text(encoding="utf-8"))
+        stack_runtime_exists = Path(state["stack_runtime_decision_path"]).exists()
+        bootstrap_expectations_exists = Path(state["bootstrap_expectations_path"]).exists()
+
+    assert response.status == "ok"
+    assert "bootstrap" in response.message
+    assert state["planning_mode"] == "greenfield"
+    assert stack_runtime_exists is True
+    assert bootstrap_expectations_exists is True
+
+
+def test_workflow_router_revise_planning_emits_metrics_event():
+    workflow_router = _load_workflow_router_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        planning_state_path = Path(tmpdir) / "planning_state.json"
+        execution_state_path = Path(tmpdir) / "state.json"
+        workflow_router.start_planning(
+            "Plan a workflow revision flow",
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+
+        response = workflow_router.revise_planning(
+            "Tighten the scope and bootstrap notes.",
+            planning_state_path=planning_state_path,
+        )
+        scorecard = json.loads(((Path(tmpdir) / "metrics") / "scorecard.json").read_text(encoding="utf-8"))
+
+    assert response.status == "ok"
+    assert scorecard["counts"]["planning_revised"] == 1
 
 
 def test_workflow_router_resume_advances_execution_state():
@@ -714,6 +930,86 @@ def test_workflow_router_resume_advances_execution_state():
     assert persisted_state["steps"][0]["status"] == "implementing"
 
 
+def test_workflow_router_resume_handles_gap_closure_and_replan_required():
+    workflow_lib = _load_workflow_lib()
+    workflow_router = _load_workflow_router_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        execution_state_path = Path(tmpdir) / "state.json"
+        planning_state_path = Path(tmpdir) / "planning_state.json"
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["workflow_status"] = "gap_closure_pending"
+        state["steps"][0]["status"] = "implementing"
+        workflow_lib.save_state(state, execution_state_path)
+        workflow_lib.save_uat_artifact(
+            workflow_lib.build_uat_artifact(
+                _example_plan(),
+                workflow_name=state["workflow_name"],
+                plan_path=state["plan_path"],
+                project_memory_path="PROJECT.md",
+                requirements_memory_path="REQUIREMENTS.md",
+                state_memory_path="STATE.md",
+            ),
+            Path(state["uat_artifact_path"]),
+        )
+        workflow_lib.update_uat_artifact_result(
+            Path(state["uat_artifact_path"]),
+            "failed_gap",
+            "One fixable verification gap remains.",
+        )
+
+        gap_response = workflow_router.resume_workflow(
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+
+        state["workflow_status"] = "replan_required"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, execution_state_path)
+        workflow_lib.update_uat_artifact_result(
+            Path(state["uat_artifact_path"]),
+            "failed_replan",
+            "The approved scope no longer matches the required architecture.",
+        )
+
+        replan_response = workflow_router.resume_workflow(
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+
+    assert "fixable gap" in gap_response.additional_context
+    assert "follow-up planning session" in replan_response.additional_context
+
+
+def test_workflow_router_allows_new_planning_after_replan_required():
+    workflow_lib = _load_workflow_lib()
+    workflow_router = _load_workflow_router_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        execution_state_path = Path(tmpdir) / "state.json"
+        planning_state_path = Path(tmpdir) / "planning_state.json"
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["workflow_status"] = "replan_required"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, execution_state_path)
+
+        response = workflow_router.start_planning(
+            "Replan after UAT exposed an architecture mismatch",
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+        planning_state_exists = planning_state_path.exists()
+
+    assert response.status == "ok"
+    assert planning_state_exists is True
+
+
 def test_workflow_router_status_blocks_on_invalid_planning_state():
     workflow_router = _load_workflow_router_lib()
 
@@ -731,6 +1027,297 @@ def test_workflow_router_status_blocks_on_invalid_planning_state():
     assert "invalid" in response.message
 
 
+def test_workflow_state_set_uat_status_passed_updates_state_and_artifact():
+    workflow_lib = _load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["workflow_status"] = "uat_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        workflow_lib.save_uat_artifact(
+            workflow_lib.build_uat_artifact(
+                _example_plan(),
+                workflow_name=state["workflow_name"],
+                plan_path=state["plan_path"],
+                project_memory_path="PROJECT.md",
+                requirements_memory_path="REQUIREMENTS.md",
+                state_memory_path="STATE.md",
+            ),
+            Path(state["uat_artifact_path"]),
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-uat-status",
+                "passed",
+                "--summary",
+                "UAT passed cleanly.",
+                "--path",
+                str(state_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        persisted_state = workflow_lib.load_state(state_path)
+        uat_artifact = workflow_lib.load_uat_artifact(Path(state["uat_artifact_path"]))
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["workflow_status"] == "ship_pending"
+    assert uat_artifact["overall_status"] == "passed"
+    assert uat_artifact["summary"] == "UAT passed cleanly."
+
+
+def test_workflow_state_set_uat_status_failed_gap_transitions_to_gap_closure():
+    workflow_lib = _load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["workflow_status"] = "uat_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        workflow_lib.save_uat_artifact(
+            workflow_lib.build_uat_artifact(
+                _example_plan(),
+                workflow_name=state["workflow_name"],
+                plan_path=state["plan_path"],
+                project_memory_path="PROJECT.md",
+                requirements_memory_path="REQUIREMENTS.md",
+                state_memory_path="STATE.md",
+            ),
+            Path(state["uat_artifact_path"]),
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-uat-status",
+                "failed-gap",
+                "--summary",
+                "One fixable verification gap remains.",
+                "--path",
+                str(state_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        persisted_state = workflow_lib.load_state(state_path)
+        uat_artifact = workflow_lib.load_uat_artifact(Path(state["uat_artifact_path"]))
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["workflow_status"] == "gap_closure_pending"
+    assert persisted_state["steps"][0]["status"] == "implementing"
+    assert uat_artifact["overall_status"] == "failed_gap"
+
+
+def test_workflow_state_set_uat_status_failed_replan_transitions_to_replan_required():
+    workflow_lib = _load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["workflow_status"] = "uat_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        workflow_lib.save_uat_artifact(
+            workflow_lib.build_uat_artifact(
+                _example_plan(),
+                workflow_name=state["workflow_name"],
+                plan_path=state["plan_path"],
+                project_memory_path="PROJECT.md",
+                requirements_memory_path="REQUIREMENTS.md",
+                state_memory_path="STATE.md",
+            ),
+            Path(state["uat_artifact_path"]),
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-uat-status",
+                "failed-replan",
+                "--summary",
+                "The approved architecture no longer matches the needed scope.",
+                "--path",
+                str(state_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        persisted_state = workflow_lib.load_state(state_path)
+        uat_artifact = workflow_lib.load_uat_artifact(Path(state["uat_artifact_path"]))
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["workflow_status"] == "replan_required"
+    assert uat_artifact["overall_status"] == "failed_replan"
+
+
+def test_metrics_scorecard_aggregates_representative_event_sequence():
+    metrics_lib = _load_metrics_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        metrics_dir = Path(tmpdir) / "metrics"
+        metrics_lib.ensure_metrics_store(metrics_dir)
+        metrics_lib.append_metrics_event(metrics_dir, "planning_started", timestamp="2026-01-01T00:00:00Z")
+        metrics_lib.append_metrics_event(metrics_dir, "planning_revised", timestamp="2026-01-01T00:00:10Z")
+        metrics_lib.append_metrics_event(metrics_dir, "planning_approved", timestamp="2026-01-01T00:00:20Z")
+        metrics_lib.append_metrics_event(metrics_dir, "execution_activated", timestamp="2026-01-01T00:00:21Z")
+        metrics_lib.append_metrics_event(metrics_dir, "review_failed", timestamp="2026-01-01T00:00:30Z")
+        metrics_lib.append_metrics_event(metrics_dir, "review_passed", timestamp="2026-01-01T00:00:40Z")
+        metrics_lib.append_metrics_event(metrics_dir, "step_committed", timestamp="2026-01-01T00:00:50Z")
+        metrics_lib.append_metrics_event(metrics_dir, "override_used", timestamp="2026-01-01T00:00:55Z")
+        metrics_lib.append_metrics_event(metrics_dir, "uat_failed_gap", timestamp="2026-01-01T00:01:00Z")
+        metrics_lib.append_metrics_event(metrics_dir, "uat_passed", timestamp="2026-01-01T00:01:20Z")
+        metrics_lib.append_metrics_event(metrics_dir, "workflow_shipped", timestamp="2026-01-01T00:01:40Z")
+
+        scorecard = json.loads((metrics_dir / "scorecard.json").read_text(encoding="utf-8"))
+        events = (metrics_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+
+    assert len(events) == 11
+    assert scorecard["plan_approval_rate"] == 1.0
+    assert scorecard["revision_count_per_plan"] == 1.0
+    assert scorecard["review_findings_per_step"] == 1.0
+    assert scorecard["verification_failure_rate"] == 0.5
+    assert scorecard["uat_failure_rate"] == 0.5
+    assert scorecard["time_to_green"]["latest_seconds"] == 80.0
+    assert scorecard["time_to_ship"]["latest_seconds"] == 100.0
+    assert scorecard["human_override_frequency"] == round(1 / 11, 4)
+
+
+def test_workflow_state_emits_review_uat_ship_and_override_metrics():
+    workflow_lib = _load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["steps"][0]["status"] = "implementing"
+        workflow_lib.save_state(state, state_path)
+        workflow_lib.save_uat_artifact(
+            workflow_lib.build_uat_artifact(
+                _example_plan(),
+                workflow_name=state["workflow_name"],
+                plan_path=state["plan_path"],
+                project_memory_path="PROJECT.md",
+                requirements_memory_path="REQUIREMENTS.md",
+                state_memory_path="STATE.md",
+            ),
+            Path(state["uat_artifact_path"]),
+        )
+
+        commands = [
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-step-status",
+                "step-1",
+                "fix_pending",
+                "--review-summary",
+                "Missing regression assertion.",
+                "--path",
+                str(state_path),
+            ],
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-step-status",
+                "step-1",
+                "commit_pending",
+                "--review-summary",
+                "review passed",
+                "--path",
+                str(state_path),
+            ],
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-step-status",
+                "step-1",
+                "committed",
+                "--path",
+                str(state_path),
+            ],
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-current-step",
+                "step-1",
+                "--override-reason",
+                "manual state reconciliation",
+                "--path",
+                str(state_path),
+            ],
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-workflow-status",
+                "uat_pending",
+                "--path",
+                str(state_path),
+            ],
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-uat-status",
+                "passed",
+                "--summary",
+                "Final UAT passed.",
+                "--path",
+                str(state_path),
+            ],
+            [
+                sys.executable,
+                str(WORKFLOW_STATE_CLI_PATH),
+                "set-workflow-status",
+                "complete",
+                "--path",
+                str(state_path),
+            ],
+        ]
+        for command in commands:
+            result = subprocess.run(command, check=False, capture_output=True, text=True)
+            assert result.returncode == 0, result.stderr
+
+        events_path = Path(state["metrics_dir"]) / "events.jsonl"
+        scorecard_path = Path(state["metrics_dir"]) / "scorecard.json"
+        events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line]
+        scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+
+    event_names = [event["event"] for event in events]
+    assert "review_failed" in event_names
+    assert "review_passed" in event_names
+    assert "step_committed" in event_names
+    assert "override_used" in event_names
+    assert "uat_passed" in event_names
+    assert "workflow_shipped" in event_names
+    assert scorecard["counts"]["review_failed"] == 1
+    assert scorecard["counts"]["uat_passed"] == 1
+    assert scorecard["counts"]["workflow_shipped"] == 1
+
+
 def test_workflow_skill_is_scaffolded():
     assert WORKFLOW_SKILL_PATH.exists()
     assert WORKFLOW_SKILL_OPENAI_PATH.exists()
@@ -744,6 +1331,8 @@ def test_workflow_skill_is_scaffolded():
     metadata_text = WORKFLOW_SKILL_OPENAI_PATH.read_text(encoding="utf-8")
 
     assert "python3 .agents/skills/workflow/scripts/workflow_router.py planning-start" in skill_text
+    assert "python3 .agents/skills/workflow/scripts/workflow_router.py bootstrap-start" in skill_text
+    assert "python3 .agents/skills/workflow/scripts/workflow_state.py set-uat-status" in skill_text
     assert ".codex/workflow/scripts/workflow_router.py" not in skill_text
     assert "Use $workflow" in metadata_text
 
@@ -752,7 +1341,21 @@ def test_ship_skill_uses_bundled_workflow_state_wrapper():
     skill_text = SHIP_SKILL_PATH.read_text(encoding="utf-8")
 
     assert "python3 .agents/skills/ship/scripts/workflow_state.py set-step-status" in skill_text
+    assert "ship_pending" in skill_text
     assert ".codex/workflow/scripts/workflow_state.py" not in skill_text
+
+
+def test_readme_and_next_steps_reflect_new_surface():
+    readme_text = README_PATH.read_text(encoding="utf-8")
+    next_steps_text = NEXT_STEPS_PATH.read_text(encoding="utf-8")
+
+    assert "bootstrap-start" in readme_text
+    assert "set-uat-status" in readme_text
+    assert ".codex/workflow/metrics/" in readme_text
+    assert "packaging" in next_steps_text.lower()
+    assert "telemetry polish" in next_steps_text.lower()
+    assert "bootstrap refinements" in next_steps_text.lower()
+    assert "There is still no explicit UAT/gap-closure/replan state machine" not in next_steps_text
 
 
 def test_workflow_skill_router_wrapper_runs_from_foreign_worktree():
@@ -894,6 +1497,115 @@ def test_planning_artifacts_are_initialized():
     assert "## Active Initiative" in state_memory
 
 
+def test_greenfield_architecture_audit_requires_stack_runtime_decision():
+    planning_lib = _load_planning_lib()
+    state = planning_lib.set_planning_status(
+        planning_lib.build_planning_state(
+            "Bootstrap a greenfield workflow kernel",
+            planning_mode="greenfield",
+        ),
+        "architecture_audit",
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state = _rebase_planning_state_paths(state, tmpdir)
+        planning_lib.initialize_planning_artifacts(state)
+        _write_supporting_planning_artifacts(state, active_initiative="Bootstrap the greenfield kernel.")
+        Path(state["discovery_dossier_path"]).write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "feature_request": state["feature_request"],
+                    "current": {
+                        "requirements": ["Bootstrap the kernel."],
+                        "assumptions": ["Python is the preferred runtime."],
+                        "anti_goals": [],
+                        "success_criteria": ["A baseline implementation plan is possible."],
+                        "entry_points": [],
+                        "blast_radius": ["No existing blast radius; constrain initial scope."],
+                        "pattern_anchors": [],
+                        "verification_anchors": ["tests/scripts/test_codex_workflow.py"],
+                        "open_questions": [],
+                        "complexity_events": [],
+                    },
+                    "supplements": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        issues = planning_lib.validate_phase_outputs(state, phase="architecture_audit")
+        _write_greenfield_planning_artifacts(state)
+        repaired_issues = planning_lib.validate_phase_outputs(state, phase="architecture_audit")
+
+    assert any("runtime_language_choice" in issue for issue in issues)
+    assert repaired_issues == []
+
+
+def test_greenfield_convergence_requires_bootstrap_expectations():
+    planning_lib = _load_planning_lib()
+    state = planning_lib.set_planning_status(
+        planning_lib.build_planning_state(
+            "Bootstrap a greenfield workflow kernel",
+            planning_mode="greenfield",
+        ),
+        "convergence",
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state = _rebase_planning_state_paths(state, tmpdir)
+        planning_lib.initialize_planning_artifacts(state)
+        _write_supporting_planning_artifacts(
+            state,
+            preserved_interfaces=[
+                "Embedding service public behavior",
+            ],
+            active_initiative="Bootstrap the greenfield kernel.",
+        )
+        Path(state["approved_plan_path"]).write_text(json.dumps(_example_plan()), encoding="utf-8")
+        Path(state["discovery_dossier_path"]).write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "feature_request": state["feature_request"],
+                    "current": {
+                        "requirements": ["Bootstrap the kernel."],
+                        "assumptions": ["Python is the preferred runtime."],
+                        "anti_goals": [],
+                        "success_criteria": ["A baseline implementation plan is possible."],
+                        "entry_points": [],
+                        "blast_radius": ["No existing blast radius; constrain initial scope."],
+                        "pattern_anchors": [],
+                        "verification_anchors": ["tests/scripts/test_codex_workflow.py"],
+                        "open_questions": [],
+                        "complexity_events": [],
+                    },
+                    "supplements": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        _write_greenfield_planning_artifacts(state)
+        Path(state["bootstrap_expectations_path"]).write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "feature_request": state["feature_request"],
+                    "ci_testing_baseline_expectations": [],
+                    "deployment_release_baseline_expectations": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        issues = planning_lib.validate_phase_outputs(state, phase="convergence")
+        _write_greenfield_planning_artifacts(state)
+        repaired_issues = planning_lib.validate_phase_outputs(state, phase="convergence")
+
+    assert any("ci_testing_baseline_expectations" in issue for issue in issues)
+    assert repaired_issues == []
+
+
 def test_approve_planning_ingests_execution_state():
     planning_lib = _load_planning_lib()
     state = planning_lib.set_planning_status(
@@ -949,10 +1661,16 @@ def test_approve_planning_ingests_execution_state():
         )
 
         persisted_state = json.loads(execution_state_path.read_text(encoding="utf-8"))
+        uat_artifact = json.loads(Path(execution_state["uat_artifact_path"]).read_text(encoding="utf-8"))
+        scorecard = json.loads((Path(execution_state["metrics_dir"]) / "scorecard.json").read_text(encoding="utf-8"))
 
     assert execution_state["workflow_name"] == "Example feature rollout"
     assert persisted_state["current_step_id"] == "step-1"
     assert planning_state_path.exists() is False
+    assert uat_artifact["overall_status"] == "pending"
+    assert any(item["id"] == "repo-memory-consistency" for item in uat_artifact["checklist"])
+    assert scorecard["counts"]["planning_approved"] == 1
+    assert scorecard["counts"]["execution_activated"] == 1
 
 
 def test_planning_audit_requires_direct_consumer_tests_for_compatibility_steps():

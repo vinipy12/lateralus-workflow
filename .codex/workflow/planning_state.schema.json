@@ -6,6 +6,7 @@
   "required": [
     "version",
     "status",
+    "planning_mode",
     "feature_request",
     "approved_plan_path",
     "context_path",
@@ -15,6 +16,8 @@
     "product_scope_audit_path",
     "skeptic_audit_path",
     "convergence_summary_path",
+    "stack_runtime_decision_path",
+    "bootstrap_expectations_path",
     "planning_trace_path",
     "project_memory_path",
     "requirements_memory_path",
@@ -43,6 +46,13 @@
         "revising",
         "blocked",
         "approval_ready"
+      ]
+    },
+    "planning_mode": {
+      "type": "string",
+      "enum": [
+        "brownfield",
+        "greenfield"
       ]
     },
     "feature_request": {
@@ -78,6 +88,14 @@
       "minLength": 1
     },
     "convergence_summary_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stack_runtime_decision_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bootstrap_expectations_path": {
       "type": "string",
       "minLength": 1
     },
