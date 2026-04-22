@@ -441,7 +441,7 @@ def _validate_step(step: dict[str, Any]) -> None:
         for item in step[list_name]:
             if not isinstance(item, str) or not item.strip():
                 raise ValueError(f"{list_name} must contain non-empty strings for {step['id']}")
-    if "wave" in step and (not isinstance(step["wave"], int) or step["wave"] < 1):
+    if "wave" in step and not _is_positive_int(step["wave"]):
         raise ValueError(f"wave must be a positive integer for {step['id']}")
 
 
@@ -579,7 +579,7 @@ def _normalize_plan_step(raw_step: dict[str, Any], *, index: int) -> dict[str, A
             normalized_step[list_name] = values
     wave = raw_step.get("wave")
     if wave is not None:
-        if not isinstance(wave, int) or wave < 1:
+        if not _is_positive_int(wave):
             raise ValueError(f"wave must be a positive integer for {step_id}")
         normalized_step["wave"] = wave
 
@@ -809,7 +809,7 @@ def _validate_plan_step(
     ):
         if optional_list_name in step:
             _ensure_string_list(step[optional_list_name], field_name=f"{optional_list_name} for {step_id}")
-    if "wave" in step and (not isinstance(step["wave"], int) or step["wave"] < 1):
+    if "wave" in step and not _is_positive_int(step["wave"]):
         raise ValueError(f"wave must be a positive integer for {step_id}")
 
     return step_id, set(requirement_ids)
@@ -1160,6 +1160,10 @@ def _extract_verify_targets(commands: list[str]) -> list[str]:
             if _looks_like_repo_path(token):
                 targets.append(token)
     return _unique_preserving_order(targets)
+
+
+def _is_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _unique_preserving_order(values: list[str]) -> list[str]:

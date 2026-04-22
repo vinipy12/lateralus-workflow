@@ -15,6 +15,7 @@ from metrics_lib import append_metrics_event, ensure_metrics_store
 from workflow_lib import (
     DEFAULT_STATE_PATH,
     _ensure_string_list,
+    _is_positive_int,
     _looks_like_repo_path,
     build_uat_artifact,
     build_state_from_plan_spec,
@@ -274,12 +275,102 @@ def _normalize_planning_state_compat(state: Any, path: Path) -> dict[str, Any]:
     normalized.setdefault("project_memory_path", _relative_or_source(repo_root / "PROJECT.md"))
     normalized.setdefault("requirements_memory_path", _relative_or_source(repo_root / "REQUIREMENTS.md"))
     normalized.setdefault("state_memory_path", _relative_or_source(repo_root / "STATE.md"))
-    normalized.setdefault(
-        "phase_checkpoint",
-        normalized["status"] if normalized.get("status") in PLANNING_PHASE_SEQUENCE else "discuss",
-    )
+    normalized.setdefault("phase_checkpoint", _infer_legacy_phase_checkpoint(normalized))
 
     return normalized
+
+
+def _infer_legacy_phase_checkpoint(state: dict[str, Any]) -> str:
+    status = state.get("status")
+    if status in PLANNING_PHASE_SEQUENCE:
+        return status
+
+    explicit_checkpoint = state.get("phase_checkpoint")
+    if explicit_checkpoint in PLANNING_PHASE_SEQUENCE:
+        return explicit_checkpoint
+
+    if status not in {"revising", "blocked"}:
+        return "discuss"
+
+    if _artifact_has_meaningful_content(_load_optional_artifact(state.get("convergence_summary_path"))):
+        return "convergence"
+    if _artifact_has_meaningful_content(_load_optional_artifact(state.get("skeptic_audit_path"))):
+        return "skeptic_audit"
+    if _artifact_has_meaningful_content(_load_optional_artifact(state.get("product_scope_audit_path"))):
+        return "product_scope_audit"
+    if _plan_artifact_is_started(state.get("approved_plan_path")) or _artifact_has_meaningful_content(
+        _load_optional_artifact(state.get("scope_contract_path"))
+    ):
+        return "planning"
+    if _artifact_has_meaningful_content(
+        _load_optional_artifact(state.get("architecture_constraints_path"))
+    ) or _artifact_has_meaningful_content(_load_optional_artifact(state.get("stack_runtime_decision_path"))):
+        return "architecture_audit"
+    if _artifact_has_meaningful_content(_load_optional_artifact(state.get("discovery_dossier_path"))):
+        return "discovery"
+    if _artifact_has_meaningful_content(_load_optional_artifact(state.get("context_path"))):
+        return "discuss"
+    return "discuss"
+
+
+def _load_optional_artifact(path_value: Any) -> dict[str, Any] | None:
+    if not isinstance(path_value, str) or not path_value.strip():
+        return None
+    path = resolve_repo_path(path_value)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _plan_artifact_is_started(path_value: Any) -> bool:
+    if not isinstance(path_value, str) or not path_value.strip():
+        return False
+    path = resolve_repo_path(path_value)
+    if not path.exists():
+        return False
+    try:
+        plan_spec = load_plan_spec(path)
+    except Exception:
+        return False
+    return bool(str(plan_spec.get("workflow_name") or "").strip())
+
+
+def _artifact_has_meaningful_content(payload: dict[str, Any] | None) -> bool:
+    if payload is None:
+        return False
+
+    ignored_keys = {"version", "feature_request"}
+    for key, value in payload.items():
+        if key in ignored_keys:
+            continue
+        if isinstance(value, dict):
+            if _artifact_has_meaningful_content(value):
+                return True
+            continue
+        if isinstance(value, list):
+            if any(_value_is_meaningful(item) for item in value):
+                return True
+            continue
+        if _value_is_meaningful(value):
+            return True
+    return False
+
+
+def _value_is_meaningful(value: Any) -> bool:
+    if isinstance(value, dict):
+        return _artifact_has_meaningful_content(value)
+    if isinstance(value, list):
+        return any(_value_is_meaningful(item) for item in value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        return bool(stripped) and stripped.lower() != "pending"
+    return value is not None
 
 
 def initialize_planning_artifacts(state: dict[str, Any]) -> None:
@@ -979,7 +1070,7 @@ def _audit_plan_contract(
             issues.append(f"step {step_id} is missing file_ownership")
         if wave is None:
             issues.append(f"step {step_id} is missing wave")
-        elif not isinstance(wave, int) or wave < 1:
+        elif not _is_positive_int(wave):
             issues.append(f"step {step_id} wave must be a positive integer")
         if risk_flags and not rollback_notes:
             issues.append(f"step {step_id} is risky but is missing rollback_notes")
@@ -1008,7 +1099,7 @@ def _audit_plan_contract(
         seen_preserved_interfaces.update(interfaces_to_preserve)
         steps_by_id[step_id] = step
         step_order[step_id] = index
-        if isinstance(wave, int) and wave > 0:
+        if _is_positive_int(wave):
             step_waves[step_id] = wave
             wave_ownership.setdefault(wave, []).append((step_id, file_ownership))
         step_dependencies[step_id] = depends_on
@@ -1177,7 +1268,7 @@ def evaluate_plan_spec(
             steps_missing_verification_targets.append(step_id)
         if wave is None:
             steps_missing_wave.append(step_id)
-        elif isinstance(wave, int) and wave > 0:
+        elif _is_positive_int(wave):
             step_waves[step_id] = wave
             wave_ownership.setdefault(wave, []).append((step_id, file_ownership))
         if not file_ownership:

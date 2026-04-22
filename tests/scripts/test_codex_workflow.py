@@ -429,6 +429,30 @@ def test_load_planning_state_backfills_v0_paths():
     assert state["planning_mode"] == "brownfield"
 
 
+def test_load_planning_state_inferrs_checkpoint_for_legacy_revising_session():
+    planning_lib = _load_planning_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_root = Path(tmpdir)
+        state = _rebase_planning_state_paths(
+            planning_lib.build_planning_state("Revise an in-flight planning session"),
+            tmpdir,
+        )
+        planning_lib.initialize_planning_artifacts(state)
+        Path(state["approved_plan_path"]).write_text(json.dumps(_example_plan()), encoding="utf-8")
+        legacy_state = dict(state)
+        legacy_state["status"] = "revising"
+        legacy_state.pop("phase_checkpoint", None)
+        planning_state_path = tmp_root / "planning_state.json"
+        planning_state_path.write_text(json.dumps(legacy_state), encoding="utf-8")
+
+        loaded_state = planning_lib.load_planning_state(planning_state_path)
+
+    assert loaded_state is not None
+    assert loaded_state["status"] == "revising"
+    assert loaded_state["phase_checkpoint"] == "planning"
+
+
 def test_planning_phase_advance_rejects_incomplete_discuss_outputs():
     planning_lib = _load_planning_lib()
 
@@ -548,6 +572,23 @@ def test_plan_validation_requires_requirement_coverage():
             assert "requirements missing step coverage" in str(exc)
         else:
             raise AssertionError("expected load_plan_spec to reject uncovered requirements")
+
+
+def test_plan_validation_rejects_boolean_wave_values():
+    workflow_lib = _load_workflow_lib()
+    plan = _example_plan()
+    plan["steps"][0]["wave"] = True
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        plan_path = Path(tmpdir) / "plan.json"
+        plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+        try:
+            workflow_lib.load_plan_spec(plan_path)
+        except ValueError as exc:
+            assert "wave must be a positive integer" in str(exc)
+        else:
+            raise AssertionError("expected load_plan_spec to reject boolean wave values")
 
 
 def test_committed_step_advances_to_next_pending_step():
