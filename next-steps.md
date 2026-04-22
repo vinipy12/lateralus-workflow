@@ -4,16 +4,17 @@
 
 - Current development branch is `stage`.
 - `python3 .codex/workflow/scripts/workflow_router.py status` reports no active workflow state.
-- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `77` tests.
+- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `80` tests.
 - `execution-start` now honors custom `--planning-state-path` and `--execution-state-path` pairs, so custom-path workflows get the same planning/execution guardrails as the default path.
 - Planning audits now support `current.direct_verification_matrix`, and the repo no longer relies on placeholder consumer-path test files to prove direct-consumer coverage.
-- Focused regression coverage now includes `tests/scripts/test_workflow_router_cli.py` and `tests/scripts/test_planning_audit.py` alongside `tests/scripts/test_codex_workflow.py`.
+- Focused regression coverage now includes `tests/scripts/test_workflow_router_cli.py`, `tests/scripts/test_planning_audit.py`, `tests/scripts/test_review_uat_workflow.py`, and `tests/scripts/test_telemetry_contract.py` alongside a slimmer `tests/scripts/test_codex_workflow.py`.
+- Review/UAT control-loop behavior and telemetry contracts are now first-class focused suites instead of assertions buried inside the monolith.
 
 ## Distance To Production Ready
 
 - This repo is still not close to production ready.
 - The current release state is effectively pre-kernel-stabilization: the core control loops exist, but they are not yet covered, packaged, and proven strongly enough to treat the workflow as a dependable production tool.
-- The biggest gap is not one bug or one missing feature. The gap is that several kernel contracts are only partially hardened: convergence behavior, bootstrap behavior, review-loop enforcement, telemetry guarantees, and install/distribution readiness.
+- The biggest gap is not one bug or one missing feature. The gap is that convergence behavior, bootstrap behavior, audit completeness, and install/distribution readiness are still not hardened enough to treat the workflow as a dependable production tool.
 - Production readiness should be treated as a multi-milestone outcome, not the next patch release.
 
 ## Production-Ready Means
@@ -29,14 +30,14 @@
 
 ### Milestone 1: Kernel Stabilization
 
-- Expand regression coverage beyond `tests/scripts/test_codex_workflow.py`.
-  Keep moving state-machine, bootstrap, telemetry, and review-loop assertions into smaller targeted modules so the monolithic workflow test is no longer the main safety net.
+- Keep shrinking `tests/scripts/test_codex_workflow.py` where narrow kernel contracts are still mixed into integration coverage.
+  Review/UAT and telemetry now have focused suites; the remaining extraction targets are mainly convergence, bootstrap, and any residual single-subsystem assertions.
 - Harden planning convergence and bootstrap contracts.
   Make discovery, planner, MVP, skeptic, and convergence outputs more mechanical and add fixed regression fixtures for greenfield and bootstrap flows.
 - Tighten the review loop against `code_review.md`.
-  Add tests for review-driven fix loops, stale-guidance detection, and required-check enforcement so review remains a blocking kernel gate instead of a prompt convention.
+  Add tests for stale-guidance detection and required-check enforcement so review remains a blocking kernel gate instead of a prompt convention.
 - Verify telemetry as a contract.
-  Add regression coverage for `.codex/workflow/metrics/events.jsonl` and `.codex/workflow/metrics/scorecard.json` across approval, UAT, gap closure, ship readiness, overrides, and cancellation.
+  Extend the focused telemetry suite beyond the extracted execution slice where needed, especially if later bootstrap or convergence work adds new metrics semantics.
 
 ### Milestone 2: Audit Completeness
 
@@ -55,6 +56,12 @@
   README, skill instructions, examples, and schemas should all describe the same contract and the same supported operational path.
 - Define a production-ready support boundary.
   Be explicit about what is intentionally supported, what is deferred, and which manual overrides remain acceptable in production use.
+
+## Milestone Completeness Snapshot
+
+- Milestone 1: about 60% complete. Router, planning-audit, review/UAT, and telemetry contracts now have focused coverage, but convergence and bootstrap hardening are still the largest kernel-stability gaps.
+- Milestone 2: about 30% complete. Direct verification matrices and some approval explicitness exist, but broader audit explainability and brownfield/greenfield parity are still incomplete.
+- Milestone 3: about 15% complete. The plugin shape and core docs exist, but clean-install validation, packaging confidence, and operational support boundaries are still early.
 
 ## Not The Production Goal
 

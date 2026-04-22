@@ -15,7 +15,7 @@ The workflow kernel currently includes:
 - repo-local UAT artifacts in `.codex/workflow/uat.json`
 - local telemetry artifacts in `.codex/workflow/metrics/events.jsonl` and `.codex/workflow/metrics/scorecard.json`
 - greenfield bootstrap planning through the existing router
-- focused router and planning-audit regression modules under `tests/scripts/`
+- focused router, planning-audit, review/UAT, and telemetry regression modules under `tests/scripts/`
 - canonical `compare-plan` baseline fixtures inside `.codex/workflow/`
 
 Still intentionally deferred:
@@ -33,7 +33,7 @@ Still intentionally deferred:
 - `PROJECT.md`: durable product intent and constraints
 - `REQUIREMENTS.md`: active backlog, accepted requirements, deferred scope, and milestone commitments
 - `STATE.md`: current initiative, latest decisions, release state, and unresolved risks
-- `tests/scripts/`: workflow regression suite, including focused router and planning-audit coverage
+- `tests/scripts/`: workflow regression suite, including focused router, planning-audit, review/UAT, telemetry, and cross-subsystem integration coverage
 
 ## Current Surface
 
@@ -159,6 +159,8 @@ This repo works as a Codex plugin. The simplest local install path is to keep it
 - Run workflow tests: `uv run pytest tests/scripts/`
 - Run focused router CLI tests: `uv run pytest tests/scripts/test_workflow_router_cli.py`
 - Run focused planning audit tests: `uv run pytest tests/scripts/test_planning_audit.py`
+- Run focused review/UAT tests: `uv run pytest tests/scripts/test_review_uat_workflow.py`
+- Run focused telemetry tests: `uv run pytest tests/scripts/test_telemetry_contract.py`
 - Inspect workflow status: `python3 .codex/workflow/scripts/workflow_router.py status`
 - Start greenfield bootstrap planning: `python3 .codex/workflow/scripts/workflow_router.py bootstrap-start "..."`
 - Record a UAT outcome: `python3 .codex/workflow/scripts/workflow_state.py set-uat-status passed --summary "..."`
