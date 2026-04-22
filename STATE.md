@@ -4,14 +4,14 @@
 - Kernel upgrade in progress.
 
 ## Active Initiative
-- Hard planning gates, repo memory, and orchestration-ready plans.
+- UAT, telemetry, and bootstrap kernel stabilization.
 
 ## Latest Decisions
-- Treat execution handoff metadata as part of the kernel.
+- Treat execution handoff metadata, UAT, and telemetry as part of the kernel.
 - Keep `$workflow` as the primary interface and `$ship` as the terminal publish skill.
 
 ## Release State
 - Pre-kernel-stabilization.
 
 ## Unresolved Risks
-- UAT, telemetry, and bootstrap mode remain intentionally deferred until the kernel milestone is stable.
+- Packaging shape is still deferred until the kernel stays stable.

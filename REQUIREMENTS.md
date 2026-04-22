@@ -1,19 +1,18 @@
 # Requirements
 
 ## Active Backlog
-- Enforce hard planning phase gates with deterministic transitions.
-- Add repo-root project memory that planning can read and audit.
-- Extend the approved plan schema with orchestration metadata.
+- Keep the UAT gate, telemetry artifacts, and bootstrap path stable.
+- Revisit packaging and distribution shape after kernel validation.
 
 ## Accepted Requirements
 - Approved plans must pass audit before execution starts.
-- Execution must preserve review and ship gates.
+- Execution must preserve review, UAT, and ship gates.
 - Parallel-ready plans must declare ownership and dependency metadata.
 
 ## Deferred Scope
-- Post-implementation UAT and gap-closure loops.
-- Local telemetry scorecards.
-- Greenfield bootstrap mode.
+- Packaging and distribution revisit.
+- Additional telemetry polish beyond the local scorecard.
+- Additional bootstrap refinements beyond the current router path.
 
 ## Milestone Commitments
-- Land hard phase gates, repo memory, and orchestration metadata together before broader packaging work.
+- Keep the kernel local, auditable, and ready for broader packaging only after the control loops stay stable.

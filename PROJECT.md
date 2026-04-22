@@ -15,6 +15,5 @@
 - Stabilize the workflow kernel before revisiting packaging or distribution shape.
 
 ## Current Priorities
-- Enforce planning phases as code.
-- Add repo-root project memory.
-- Make approved plans orchestration-ready.
+- Keep the UAT gate, telemetry artifacts, and bootstrap path auditable.
+- Revisit packaging only after the kernel milestone stays stable.
