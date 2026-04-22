@@ -361,6 +361,10 @@ def cancel_workflow(
     execution_state_path: Path = DEFAULT_STATE_PATH,
 ) -> WorkflowRouteResponse:
     cleared_labels: list[str] = []
+    metrics_dirs = _metrics_roots_for_cancel(
+        planning_state_path=planning_state_path,
+        execution_state_path=execution_state_path,
+    )
 
     if clear_planning_state(planning_state_path):
         cleared_labels.append("planning state")
@@ -368,6 +372,15 @@ def cancel_workflow(
     if execution_state_path.exists():
         execution_state_path.unlink()
         cleared_labels.append("execution state")
+
+    if cleared_labels:
+        for metrics_dir in metrics_dirs:
+            ensure_metrics_store(metrics_dir)
+            append_metrics_event(
+                metrics_dir,
+                "workflow_canceled",
+                details={"cleared": cleared_labels},
+            )
 
     if not cleared_labels:
         message = "no active workflow state to cancel"
@@ -433,6 +446,28 @@ def _rebase_planning_artifacts(state: dict, planning_root: Path) -> dict:
     rebased["requirements_memory_path"] = str(repo_root / "REQUIREMENTS.md")
     rebased["state_memory_path"] = str(repo_root / "STATE.md")
     return rebased
+
+
+def _metrics_roots_for_cancel(*, planning_state_path: Path, execution_state_path: Path) -> list[Path]:
+    roots: list[Path] = []
+    planning_state, _ = _load_planning_state_safe(planning_state_path)
+    if planning_state is not None:
+        roots.append(planning_state_path.resolve().parent / "metrics")
+
+    execution_state = _load_execution_state(execution_state_path)
+    if execution_state is not None:
+        metrics_dir = execution_state.get("metrics_dir")
+        if isinstance(metrics_dir, str) and metrics_dir.strip():
+            roots.append(Path(metrics_dir))
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root.resolve())
+        if key not in seen:
+            seen.add(key)
+            unique.append(root)
+    return unique
 
 
 def _relative_or_source(path: Path) -> str:

@@ -84,10 +84,15 @@ def build_scorecard(events: list[dict[str, Any]]) -> dict[str, Any]:
         timestamp = _parse_iso8601(timestamp_value)
 
         if event == "planning_started":
+            # The workflow model allows only one active planning/execution session at a time.
+            # If a new planning session starts while one is still open in the scorecard queue,
+            # the older session was abandoned or canceled without a closing event.
+            if queue:
+                queue.clear()
             queue.append({"started_at": timestamp, "green_recorded": False})
             continue
 
-        if event == "uat_failed_replan":
+        if event in {"uat_failed_replan", "workflow_canceled"}:
             if queue:
                 queue.pop(0)
             continue

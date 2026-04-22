@@ -661,7 +661,8 @@ def approve_planning(
     approved_plan_path = resolve_repo_path(state["approved_plan_path"])
     plan_spec = load_plan_spec(approved_plan_path)
     execution_root = execution_state_path.resolve().parent
-    metrics_dir = execution_root / "metrics"
+    planning_root = planning_state_path.resolve().parent
+    metrics_dir = planning_root / "metrics"
     uat_artifact_path = execution_root / "uat.json"
     execution_state = build_state_from_plan_spec(
         plan_spec,

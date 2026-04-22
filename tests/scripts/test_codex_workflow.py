@@ -948,6 +948,50 @@ def test_workflow_router_revise_planning_emits_metrics_event():
     assert scorecard["counts"]["planning_revised"] == 1
 
 
+def test_approve_planning_uses_planning_metrics_root_when_execution_path_differs():
+    planning_lib = _load_planning_lib()
+    workflow_router = _load_workflow_router_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        planning_root = Path(tmpdir) / "planning"
+        execution_root = Path(tmpdir) / "execution"
+        planning_state_path = planning_root / "planning_state.json"
+        execution_state_path = execution_root / "state.json"
+
+        workflow_router.start_planning(
+            "Plan a split-path approval flow",
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+
+        state = planning_lib.load_planning_state(planning_state_path)
+        assert state is not None
+        state = planning_lib.set_planning_status(state, "approval_ready")
+        planning_lib.save_planning_state(state, planning_state_path)
+        Path(state["approved_plan_path"]).write_text(PLAN_EXAMPLE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+        _write_supporting_planning_artifacts(
+            state,
+            preserved_interfaces=[
+                "Example module public behavior contract",
+                "Second example module public behavior contract",
+            ],
+            active_initiative="Deliver the example feature as two approval-ready, commit-worthy slices.",
+        )
+
+        execution_state = planning_lib.approve_planning(
+            state,
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+        planning_scorecard = json.loads(((planning_root / "metrics") / "scorecard.json").read_text(encoding="utf-8"))
+
+    assert execution_state["metrics_dir"] == str(planning_root / "metrics")
+    assert planning_scorecard["counts"]["planning_started"] == 1
+    assert planning_scorecard["counts"]["planning_approved"] == 1
+    assert planning_scorecard["counts"]["execution_activated"] == 1
+    assert (execution_root / "metrics" / "scorecard.json").exists() is False
+
+
 def test_workflow_router_resume_advances_execution_state():
     workflow_lib = _load_workflow_lib()
     workflow_router = _load_workflow_router_lib()
@@ -1066,6 +1110,28 @@ def test_workflow_router_status_blocks_on_invalid_planning_state():
 
     assert response.status == "blocked"
     assert "invalid" in response.message
+
+
+def test_cancel_workflow_emits_metrics_event():
+    workflow_router = _load_workflow_router_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        planning_state_path = Path(tmpdir) / "planning_state.json"
+        execution_state_path = Path(tmpdir) / "state.json"
+        workflow_router.start_planning(
+            "Plan a cancel flow",
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+
+        response = workflow_router.cancel_workflow(
+            planning_state_path=planning_state_path,
+            execution_state_path=execution_state_path,
+        )
+        scorecard = json.loads(((Path(tmpdir) / "metrics") / "scorecard.json").read_text(encoding="utf-8"))
+
+    assert response.status == "ok"
+    assert scorecard["counts"]["workflow_canceled"] == 1
 
 
 def test_workflow_state_set_uat_status_passed_updates_state_and_artifact():
@@ -1244,6 +1310,44 @@ def test_metrics_scorecard_aggregates_representative_event_sequence():
     assert scorecard["time_to_green"]["latest_seconds"] == 80.0
     assert scorecard["time_to_ship"]["latest_seconds"] == 100.0
     assert scorecard["human_override_frequency"] == round(1 / 11, 4)
+
+
+def test_metrics_scorecard_drops_canceled_session_from_timing_queue():
+    metrics_lib = _load_metrics_lib()
+
+    scorecard = metrics_lib.build_scorecard(
+        [
+            {"event": "planning_started", "timestamp": "2026-01-01T00:00:00Z"},
+            {"event": "workflow_canceled", "timestamp": "2026-01-01T00:00:10Z"},
+            {"event": "planning_started", "timestamp": "2026-01-01T00:00:20Z"},
+            {"event": "planning_approved", "timestamp": "2026-01-01T00:00:25Z"},
+            {"event": "execution_activated", "timestamp": "2026-01-01T00:00:26Z"},
+            {"event": "uat_passed", "timestamp": "2026-01-01T00:00:40Z"},
+            {"event": "workflow_shipped", "timestamp": "2026-01-01T00:00:50Z"},
+        ]
+    )
+
+    assert scorecard["time_to_green"]["latest_seconds"] == 20.0
+    assert scorecard["time_to_ship"]["latest_seconds"] == 30.0
+    assert scorecard["counts"]["workflow_canceled"] == 1
+
+
+def test_metrics_scorecard_drops_abandoned_open_session_when_new_planning_starts():
+    metrics_lib = _load_metrics_lib()
+
+    scorecard = metrics_lib.build_scorecard(
+        [
+            {"event": "planning_started", "timestamp": "2026-01-01T00:00:00Z"},
+            {"event": "planning_started", "timestamp": "2026-01-01T00:00:20Z"},
+            {"event": "planning_approved", "timestamp": "2026-01-01T00:00:25Z"},
+            {"event": "execution_activated", "timestamp": "2026-01-01T00:00:26Z"},
+            {"event": "uat_passed", "timestamp": "2026-01-01T00:00:40Z"},
+            {"event": "workflow_shipped", "timestamp": "2026-01-01T00:00:50Z"},
+        ]
+    )
+
+    assert scorecard["time_to_green"]["latest_seconds"] == 20.0
+    assert scorecard["time_to_ship"]["latest_seconds"] == 30.0
 
 
 def test_workflow_state_emits_review_uat_ship_and_override_metrics():
