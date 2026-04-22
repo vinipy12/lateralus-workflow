@@ -9,11 +9,13 @@ The workflow kernel currently includes:
 - hard-gated planning phases with deterministic advancement
 - repo-root project memory in `PROJECT.md`, `REQUIREMENTS.md`, and `STATE.md`
 - approval-time planning audits
+- explicit discovery-driven direct verification matrices via `current.direct_verification_matrix`
 - orchestration-ready plan metadata such as `depends_on`, `wave`, `file_ownership`, `rollback_notes`, and `operational_watchpoints`
 - stepwise execution with implement, review, fix, commit, UAT, and ship gates
 - repo-local UAT artifacts in `.codex/workflow/uat.json`
 - local telemetry artifacts in `.codex/workflow/metrics/events.jsonl` and `.codex/workflow/metrics/scorecard.json`
 - greenfield bootstrap planning through the existing router
+- focused router and planning-audit regression modules under `tests/scripts/`
 - canonical `compare-plan` baseline fixtures inside `.codex/workflow/`
 
 Still intentionally deferred:
@@ -31,7 +33,7 @@ Still intentionally deferred:
 - `PROJECT.md`: durable product intent and constraints
 - `REQUIREMENTS.md`: active backlog, accepted requirements, deferred scope, and milestone commitments
 - `STATE.md`: current initiative, latest decisions, release state, and unresolved risks
-- `tests/scripts/test_codex_workflow.py`: focused workflow regression suite
+- `tests/scripts/`: workflow regression suite, including focused router and planning-audit coverage
 
 ## Current Surface
 
@@ -71,6 +73,8 @@ Planning reads repo memory from:
 - `REQUIREMENTS.md` for scope and backlog commitments
 - `STATE.md` for current initiative and delivery state
 
+For compatibility-sensitive discovery, `current.direct_verification_matrix` can map discovered entry points to the exact direct verification targets the approval audit should require. The audit uses that explicit mapping first and falls back to inferred test paths only when no matrix entry exists.
+
 ## Core Entrypoints
 
 - Native skill: `$workflow`
@@ -84,6 +88,8 @@ Planning reads repo memory from:
   - `python3 .codex/workflow/scripts/workflow_router.py resume`
   - `python3 .codex/workflow/scripts/workflow_router.py status`
   - `python3 .codex/workflow/scripts/workflow_router.py cancel`
+
+When using non-default workflow files, pass the matching `--planning-state-path` and `--execution-state-path` values to router commands that cross the planning/execution boundary, including `execution-start`, so guardrails inspect the same workflow session.
 - Planning state CLI:
   - `python3 .codex/workflow/scripts/planning_state.py show`
   - `python3 .codex/workflow/scripts/planning_state.py validate`
@@ -150,7 +156,9 @@ This repo works as a Codex plugin. The simplest local install path is to keep it
 ## Development
 
 - Install dev dependencies: `uv sync --dev`
-- Run workflow tests: `uv run pytest tests/scripts/test_codex_workflow.py`
+- Run workflow tests: `uv run pytest tests/scripts/`
+- Run focused router CLI tests: `uv run pytest tests/scripts/test_workflow_router_cli.py`
+- Run focused planning audit tests: `uv run pytest tests/scripts/test_planning_audit.py`
 - Inspect workflow status: `python3 .codex/workflow/scripts/workflow_router.py status`
 - Start greenfield bootstrap planning: `python3 .codex/workflow/scripts/workflow_router.py bootstrap-start "..."`
 - Record a UAT outcome: `python3 .codex/workflow/scripts/workflow_state.py set-uat-status passed --summary "..."`

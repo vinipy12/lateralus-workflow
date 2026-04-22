@@ -1,10 +1,10 @@
 # Repository Guidelines
 
 ## Structure
-`.codex/workflow/` contains the workflow engine, schemas, examples, and strategy notes. `.agents/skills/` contains the Codex-facing skills, currently `workflow` and `ship`. Tests live under `tests/scripts/`, with a few placeholder paths under `tests/api/` and `tests/orchestrators/` used to verify direct-consumer audit inference.
+`.codex/workflow/` contains the workflow engine, schemas, examples, and strategy notes. `.agents/skills/` contains the Codex-facing skills, currently `workflow` and `ship`. Tests live under `tests/scripts/`, with focused router and planning-audit modules alongside the broader workflow regression suite.
 
 ## Commands
-Install dependencies with `uv sync --dev`. Run the focused regression suite with `uv run pytest tests/scripts/test_codex_workflow.py`. Use `python3 .codex/workflow/scripts/workflow_router.py status` to inspect live workflow state and `python3 .codex/workflow/scripts/planning_state.py compare-plan` to compare planning outputs.
+Install dependencies with `uv sync --dev`. Run the focused regression suite with `uv run pytest tests/scripts/`. Use `python3 .codex/workflow/scripts/workflow_router.py status` to inspect live workflow state and `python3 .codex/workflow/scripts/planning_state.py compare-plan` to compare planning outputs.
 
 ## Style
 Target Python 3.13, keep modules and functions in `snake_case`, classes in `PascalCase`, and prefer small repo-local JSON-first utilities over framework-heavy abstractions. Keep the workflow deterministic: shared state on disk, explicit transitions, and auditable prompts.

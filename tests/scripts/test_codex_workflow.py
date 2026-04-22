@@ -1881,10 +1881,13 @@ def test_readme_and_next_steps_reflect_new_surface():
     assert "set-uat-status" in readme_text
     assert "set-workflow-status <status> --override-reason" in readme_text
     assert ".codex/workflow/metrics/" in readme_text
-    assert "Kernel hardening first is complete" in next_steps_text
-    assert "Strengthen planning audits beyond direct-consumer coverage." in next_steps_text
-    assert "Keep scope to PR shipping only." in next_steps_text
-    assert "Production rollout orchestration." in next_steps_text
+    assert "uv run pytest tests/scripts/" in readme_text
+    assert "Current Repo State" in next_steps_text
+    assert "Distance To Production Ready" in next_steps_text
+    assert "This repo is still not close to production ready." in next_steps_text
+    assert "Production-Ready Means" in next_steps_text
+    assert "Milestone 1: Kernel Stabilization" in next_steps_text
+    assert "Production rollout orchestration beyond PR shipping." in next_steps_text
     assert "There is still no explicit UAT/gap-closure/replan state machine" not in next_steps_text
 
 
@@ -2290,6 +2293,20 @@ def test_planning_audit_requires_direct_consumer_tests_for_compatibility_steps()
             ],
             "pattern_anchors": [],
             "verification_anchors": [],
+            "direct_verification_matrix": [
+                {
+                    "entry_point": "app/api/ai_enrichment.py",
+                    "verification_targets": ["tests/contracts/test_ai_enrichment_route.py"],
+                },
+                {
+                    "entry_point": "app/orchestrators/batch_enrichment.py",
+                    "verification_targets": ["tests/contracts/test_batch_enrichment_orchestrator.py"],
+                },
+                {
+                    "entry_point": "app/orchestrators/filter_batch.py",
+                    "verification_targets": ["tests/contracts/test_filter_batch_orchestrator.py"],
+                },
+            ],
             "open_questions": [],
             "complexity_events": [],
         },
@@ -2332,9 +2349,9 @@ def test_planning_audit_requires_direct_consumer_tests_for_compatibility_steps()
 
         issues = planning_lib.audit_planning_artifacts(state)
 
-    assert any("tests/api/test_ai_enrichment.py" in issue for issue in issues)
-    assert any("tests/orchestrators/test_batch_enrichment.py" in issue for issue in issues)
-    assert any("tests/orchestrators/test_filter_batch.py" in issue for issue in issues)
+    assert any("tests/contracts/test_ai_enrichment_route.py" in issue for issue in issues)
+    assert any("tests/contracts/test_batch_enrichment_orchestrator.py" in issue for issue in issues)
+    assert any("tests/contracts/test_filter_batch_orchestrator.py" in issue for issue in issues)
 
 
 def test_approve_planning_rejects_underverified_compatibility_plan():
@@ -2423,6 +2440,20 @@ def test_approve_planning_rejects_underverified_compatibility_plan():
             "blast_radius": [],
             "pattern_anchors": [],
             "verification_anchors": [],
+            "direct_verification_matrix": [
+                {
+                    "entry_point": "app/api/ai_enrichment.py",
+                    "verification_targets": ["tests/contracts/test_ai_enrichment_route.py"],
+                },
+                {
+                    "entry_point": "app/orchestrators/batch_enrichment.py",
+                    "verification_targets": ["tests/contracts/test_batch_enrichment_orchestrator.py"],
+                },
+                {
+                    "entry_point": "app/orchestrators/filter_batch.py",
+                    "verification_targets": ["tests/contracts/test_filter_batch_orchestrator.py"],
+                },
+            ],
             "open_questions": [],
             "complexity_events": [],
         },
@@ -2477,7 +2508,7 @@ def test_approve_planning_rejects_underverified_compatibility_plan():
             )
         except ValueError as exc:
             assert "failed planning audit" in str(exc)
-            assert "tests/api/test_ai_enrichment.py" in str(exc)
+            assert "tests/contracts/test_ai_enrichment_route.py" in str(exc)
         else:
             raise AssertionError("expected approve_planning to reject under-verified compatibility plan")
 

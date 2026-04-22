@@ -1,81 +1,72 @@
 # Next Steps
 
-## Completed Baseline
+## Current Repo State
 
-- Kernel hardening first is complete.
-- `execution-start` no longer clobbers active planning or non-terminal execution state.
-- Workflow completion now requires the real ship path: `ship_pending` plus a current step that is already `shipped`.
-- Manual workflow-status jumps are now explicit override operations with `--override-reason`.
+- Current development branch is `stage`.
+- `python3 .codex/workflow/scripts/workflow_router.py status` reports no active workflow state.
+- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `77` tests.
+- `execution-start` now honors custom `--planning-state-path` and `--execution-state-path` pairs, so custom-path workflows get the same planning/execution guardrails as the default path.
+- Planning audits now support `current.direct_verification_matrix`, and the repo no longer relies on placeholder consumer-path test files to prove direct-consumer coverage.
+- Focused regression coverage now includes `tests/scripts/test_workflow_router_cli.py` and `tests/scripts/test_planning_audit.py` alongside `tests/scripts/test_codex_workflow.py`.
 
-## Plan
+## Distance To Production Ready
 
-### Ready next
+- This repo is still not close to production ready.
+- The current release state is effectively pre-kernel-stabilization: the core control loops exist, but they are not yet covered, packaged, and proven strongly enough to treat the workflow as a dependable production tool.
+- The biggest gap is not one bug or one missing feature. The gap is that several kernel contracts are only partially hardened: convergence behavior, bootstrap behavior, review-loop enforcement, telemetry guarantees, and install/distribution readiness.
+- Production readiness should be treated as a multi-milestone outcome, not the next patch release.
 
-- Strengthen planning audits beyond direct-consumer coverage.
-- Formalize subagent role contracts and convergence outputs.
-- Add planner-behavior regression fixtures, not just schema tests.
+## Production-Ready Means
 
-### Later
+- Brownfield planning, greenfield bootstrap, execution, review, UAT, ship, resume, status, and cancel all behave deterministically with no silent state corruption or ambiguous manual recovery.
+- Planning approval audits are explicit and durable: direct consumer verification, dependency ownership, repo-memory alignment, and scope checks are enforced by stable tests rather than inferred from fragile conventions.
+- Review and UAT are hard gates in practice, not just in prompts: fix loops, stale-guidance detection, override handling, and telemetry emission are all mechanically verified.
+- Telemetry artifacts under `.codex/workflow/metrics/` are trustworthy enough to audit real runs, including approval, review, UAT, overrides, cancellation, and ship outcomes.
+- The plugin and skill entrypoints are installable and usable in a clean repo checkout without hidden local assumptions or repo-author-only setup knowledge.
+- The maintained scope is clear: production ready here means reliable planning-through-PR-shipping for maintainers in a live repo checkout, not full deployment orchestration, monitoring, or rollback automation.
 
-- Improve approval summaries with explicit tradeoffs and unresolved risk.
-- Add richer brownfield and greenfield memory-alignment checks.
-- Tighten orchestration-readiness metadata budgets.
+## Milestones To Get There
 
-### Ready Definition
+### Milestone 1: Kernel Stabilization
 
-- Plans are decision-complete, auditable, and stable enough for another agent to execute without guessing.
+- Expand regression coverage beyond `tests/scripts/test_codex_workflow.py`.
+  Keep moving state-machine, bootstrap, telemetry, and review-loop assertions into smaller targeted modules so the monolithic workflow test is no longer the main safety net.
+- Harden planning convergence and bootstrap contracts.
+  Make discovery, planner, MVP, skeptic, and convergence outputs more mechanical and add fixed regression fixtures for greenfield and bootstrap flows.
+- Tighten the review loop against `code_review.md`.
+  Add tests for review-driven fix loops, stale-guidance detection, and required-check enforcement so review remains a blocking kernel gate instead of a prompt convention.
+- Verify telemetry as a contract.
+  Add regression coverage for `.codex/workflow/metrics/events.jsonl` and `.codex/workflow/metrics/scorecard.json` across approval, UAT, gap closure, ship readiness, overrides, and cancellation.
 
-## Development
+### Milestone 2: Audit Completeness
 
-### Ready next
+- Expand explicit consumer verification matrices beyond the first migrated compatibility-plan cases.
+  Move more compatibility coverage onto discovery-driven direct verification mappings and keep filesystem inference only as a compatibility fallback.
+- Make approval audits fully explicit about why a plan passes or fails.
+  Reduce reliance on prompt interpretation and ensure the main planning audits are understandable, reproducible, and test-backed.
+- Close remaining brownfield and greenfield audit gaps.
+  Brownfield and bootstrap plans should both hit the same standard for memory alignment, verification specificity, and execution handoff quality.
 
-- Harden state transitions and single-active-workflow invariants.
-- Tighten allowed manual overrides.
-- Add better sequential execution guardrails around step progression.
+### Milestone 3: Packaging And Operational Readiness
 
-### Later
+- Revisit packaging and distribution shape after the kernel stays stable.
+  Production readiness requires a clean install story, stable wrapper behavior, and confidence that non-authors can use the plugin without special repo knowledge.
+- Tighten release-facing documentation.
+  README, skill instructions, examples, and schemas should all describe the same contract and the same supported operational path.
+- Define a production-ready support boundary.
+  Be explicit about what is intentionally supported, what is deferred, and which manual overrides remain acceptable in production use.
 
-- Add dependency-aware parallel execution for unrelated steps using existing `depends_on` and `wave`.
-- Add explicit recovery flows for interrupted or partially completed runs.
+## Not The Production Goal
 
-### Ready Definition
+- Production rollout orchestration beyond PR shipping.
+- Monitoring and rollback automation for downstream systems.
+- Telemetry polish beyond the local scorecard before the kernel contracts are stable.
+- Broader packaging or multi-skill splitting before the kernel milestone is proven.
 
-- Development state cannot be silently clobbered or advanced into impossible states.
+## Exit Criteria
 
-## Review
-
-### Ready next
-
-- Make review gate expectations more mechanical and more visible.
-- Add tests for review-driven fix loops and stale-guidance detection.
-
-### Later
-
-- Promote review into a more explicit first-class warfront if the embedded gate becomes too opaque.
-- Add production-readiness review profiles for riskier changes.
-
-### Ready Definition
-
-- Review outcomes are reproducible, blocking, and auditable.
-
-## Deployment
-
-### Ready next
-
-- Keep scope to PR shipping only.
-- Ensure completion can happen only from valid ship-ready state.
-- Align `$ship`, metrics, and completion events.
-
-### Later
-
-- Add optional release-readiness artifacts.
-- Add optional deploy and runbook metadata if real usage demands it.
-
-### Not yet
-
-- Production rollout orchestration.
-- Monitoring and rollback automation.
-
-### Ready Definition
-
-- A ship-ready workflow can reliably publish a correct PR and close state without faking completion.
+- `tests/scripts/` covers the kernel with focused suites for router behavior, planning audits, execution transitions, review/UAT loops, telemetry, and bootstrap flows.
+- The remaining control-loop risks can be described as edge cases, not as whole areas that are still only partially specified.
+- The audit contract no longer depends on placeholder inference or repo-author context to stay honest.
+- A clean install in a normal repo checkout can start, approve, resume, review, UAT, and ship a workflow through the supported path without undocumented setup.
+- At that point, it is reasonable to call the repo production ready for its intended scope.

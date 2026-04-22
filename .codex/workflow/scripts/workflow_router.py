@@ -55,6 +55,7 @@ def main() -> int:
     execution_parser.add_argument("--ship-skill")
     execution_parser.add_argument("--request-codex-review", action="store_true", default=True)
     execution_parser.add_argument("--no-request-codex-review", action="store_false", dest="request_codex_review")
+    execution_parser.add_argument("--planning-state-path", type=Path, default=None)
     execution_parser.add_argument("--execution-state-path", type=Path, default=None)
 
     resume_parser = subparsers.add_parser("resume", help="Resume the active planning or execution workflow.")

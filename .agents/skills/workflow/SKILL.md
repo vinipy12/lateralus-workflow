@@ -69,6 +69,7 @@ For direct activation from an approved plan artifact:
 
 1. Run `execution-start [plan-file]`.
 2. If the plan file contains multiple JSON plans, pass `--plan-id <id>`.
+3. If the workflow uses non-default state files, pass both `--planning-state-path` and `--execution-state-path` so activation checks the matching planning session.
 
 ## Status And Cancellation
 

@@ -417,6 +417,7 @@ def initialize_planning_artifacts(state: dict[str, Any]) -> None:
             "blast_radius": [],
             "pattern_anchors": [],
             "verification_anchors": [],
+            "direct_verification_matrix": [],
             "open_questions": [],
             "complexity_events": [],
         },
@@ -897,6 +898,9 @@ def audit_plan_against_discovery(plan_spec: dict[str, Any], discovery: dict[str,
     entry_points = _ensure_discovery_string_list(current.get("entry_points", []), "current.entry_points")
     if not entry_points:
         return []
+    direct_verification_matrix = _normalize_direct_verification_matrix(
+        current.get("direct_verification_matrix", [])
+    )
 
     requirements_by_id = {
         str(requirement["id"]): requirement for requirement in plan_spec.get("requirements", []) if isinstance(requirement, dict)
@@ -910,7 +914,15 @@ def audit_plan_against_discovery(plan_spec: dict[str, Any], discovery: dict[str,
         if not impacted_entry_points or not _step_requires_direct_coverage(step, requirements_by_id):
             continue
 
-        required_targets = _direct_verification_targets_for_entry_points(impacted_entry_points)
+        required_targets, unmapped_entry_points = _direct_verification_targets_for_entry_points(
+            impacted_entry_points,
+            direct_verification_matrix=direct_verification_matrix,
+        )
+        if unmapped_entry_points:
+            issues.append(
+                f"step {step.get('id', '<unknown>')} has no direct verification target mapping for discovered consumers: "
+                + ", ".join(unmapped_entry_points)
+            )
         if not required_targets:
             continue
 
@@ -1811,7 +1823,7 @@ def _planning_phase_contract(state: dict[str, Any], *, phase_name: str) -> str:
         return (
             "Current phase contract:\n"
             "- Inputs: validated `context.json` plus the repo memory docs.\n"
-            "- Output: `discovery_dossier.json` with requirements, entry points, blast radius, pattern anchors, verification anchors, and open questions.\n"
+            "- Output: `discovery_dossier.json` with requirements, entry points, blast radius, pattern anchors, verification anchors, optional `direct_verification_matrix`, and open questions.\n"
             "- Allowed work: collect facts and codebase anchors only; do not lock architecture or author the implementation plan yet.\n"
             f"- When discovery outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance architecture_audit`.\n"
         )
@@ -1934,10 +1946,23 @@ def _validate_discovery_phase(state: dict[str, Any]) -> list[str]:
     current = discovery.get("current")
     if not isinstance(current, dict):
         return issues + ["discovery dossier is missing the current section"]
+    try:
+        direct_verification_matrix = _normalize_direct_verification_matrix(
+            current.get("direct_verification_matrix", [])
+        )
+    except ValueError as exc:
+        return issues + [str(exc)]
     if not _artifact_string_list(current.get("requirements")):
         issues.append("discovery phase requires current.requirements")
     if not _artifact_string_list(current.get("success_criteria")):
         issues.append("discovery phase requires current.success_criteria")
+    known_entry_points = set(_artifact_string_list(current.get("entry_points")))
+    for item in direct_verification_matrix:
+        if known_entry_points and item["entry_point"] not in known_entry_points:
+            issues.append(
+                "discovery phase direct_verification_matrix references an unknown entry point: "
+                f"{item['entry_point']}"
+            )
     if state["planning_mode"] == "greenfield":
         if not _artifact_string_list(current.get("assumptions")):
             issues.append("greenfield discovery phase requires current.assumptions")
@@ -1952,6 +1977,8 @@ def _validate_discovery_phase(state: dict[str, Any]) -> list[str]:
     anchors = []
     for field_name in ("entry_points", "pattern_anchors", "verification_anchors"):
         anchors.extend(_artifact_string_list(current.get(field_name)))
+    for item in direct_verification_matrix:
+        anchors.extend(item["verification_targets"])
     if not anchors:
         issues.append(
             "discovery phase requires at least one entry point, pattern anchor, or verification anchor"
@@ -2200,6 +2227,41 @@ def _ensure_discovery_string_list(value: Any, field_name: str) -> list[str]:
     return normalized
 
 
+def _normalize_direct_verification_matrix(value: Any) -> list[dict[str, Any]]:
+    if value in (None, []):
+        return []
+    if not isinstance(value, list):
+        raise ValueError("discovery current.direct_verification_matrix must be a list")
+
+    normalized: list[dict[str, Any]] = []
+    seen_entry_points: set[str] = set()
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"discovery current.direct_verification_matrix[{index}] must be an object")
+
+        entry_point = item.get("entry_point")
+        if not isinstance(entry_point, str) or not entry_point.strip():
+            raise ValueError(
+                f"discovery current.direct_verification_matrix[{index}].entry_point must be a non-empty string"
+            )
+        entry_point = entry_point.strip()
+        if entry_point in seen_entry_points:
+            raise ValueError(f"discovery current.direct_verification_matrix has duplicate entry_point: {entry_point}")
+
+        verification_targets = _ensure_discovery_string_list(
+            item.get("verification_targets", []),
+            f"current.direct_verification_matrix[{index}].verification_targets",
+        )
+        normalized.append(
+            {
+                "entry_point": entry_point,
+                "verification_targets": verification_targets,
+            }
+        )
+        seen_entry_points.add(entry_point)
+    return normalized
+
+
 def _extract_verify_targets(commands: list[str]) -> list[str]:
     targets: list[str] = []
     for command in commands:
@@ -2287,17 +2349,40 @@ def _step_requires_direct_coverage(step: dict[str, Any], requirements_by_id: dic
     return any(keyword in step_text for keyword in DIRECT_COVERAGE_KEYWORDS)
 
 
-def _direct_verification_targets_for_entry_points(entry_points: list[str]) -> list[str]:
+def _direct_verification_targets_for_entry_points(
+    entry_points: list[str],
+    *,
+    direct_verification_matrix: list[dict[str, Any]] | None = None,
+) -> tuple[list[str], list[str]]:
+    matrix_by_entry_point = {
+        item["entry_point"]: item["verification_targets"] for item in (direct_verification_matrix or [])
+    }
     targets: list[str] = []
+    unmapped_entry_points: list[str] = []
     for entry_point in entry_points:
-        if not entry_point.startswith("app/") or not entry_point.endswith(".py"):
+        explicit_targets = matrix_by_entry_point.get(entry_point)
+        if explicit_targets:
+            targets.extend(explicit_targets)
             continue
-        source_path = Path(entry_point)
-        relative_path = source_path.relative_to("app")
-        test_path = Path("tests") / relative_path.parent / f"test_{relative_path.name}"
-        if (ROOT_DIR / test_path).exists():
-            targets.append(str(test_path))
-    return sorted(dict.fromkeys(targets))
+
+        inferred_targets = _inferred_direct_verification_targets_for_entry_point(entry_point)
+        if inferred_targets:
+            targets.extend(inferred_targets)
+            continue
+
+        unmapped_entry_points.append(entry_point)
+    return sorted(dict.fromkeys(targets)), unmapped_entry_points
+
+
+def _inferred_direct_verification_targets_for_entry_point(entry_point: str) -> list[str]:
+    if not entry_point.startswith("app/") or not entry_point.endswith(".py"):
+        return []
+    source_path = Path(entry_point)
+    relative_path = source_path.relative_to("app")
+    test_path = Path("tests") / relative_path.parent / f"test_{relative_path.name}"
+    if (ROOT_DIR / test_path).exists():
+        return [str(test_path)]
+    return []
 
 
 def _plan_text(plan_spec: dict[str, Any]) -> str:
