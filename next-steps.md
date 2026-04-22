@@ -14,7 +14,7 @@
 
 - This repo is still not close to production ready.
 - The current release state is effectively pre-kernel-stabilization: the core control loops exist, but they are not yet covered, packaged, and proven strongly enough to treat the workflow as a dependable production tool.
-- The biggest gap is not one bug or one missing feature. The gap is that convergence behavior, bootstrap behavior, audit completeness, and install/distribution readiness are still not hardened enough to treat the workflow as a dependable production tool.
+- The biggest gap is not one bug or one missing feature. The gap is that execution-control hardening, convergence/bootstrap behavior, audit completeness, and install/distribution readiness are still not hardened enough to treat the workflow as a dependable production tool.
 - Production readiness should be treated as a multi-milestone outcome, not the next patch release.
 
 ## Production-Ready Means
@@ -30,14 +30,32 @@
 
 ### Milestone 1: Kernel Stabilization
 
+#### Harness Engineering
+
+- Treat the kernel as a harness problem, not just a prompt-tuning problem.
+  Add deterministic feedforward guides and feedback sensors instead of relying on repeated human correction.
+- Distribute controls across the lifecycle.
+  Run fast computational checks before inferential review, and keep heavier review/UAT checks after integration where they add signal.
+- Make execution semantics explicit.
+  Continue until completion criteria are met, or escalate with an explicit reason when the workflow cannot safely proceed.
+- Use recurring failures as steering input.
+  When the same failure or escalation repeats, tighten the harness and promote that lesson into a new control.
+
+#### Next Coding Slice: Execution Control Hardening
+
+1. Add deterministic execution sensors before inferential review.
+2. Make continue-or-escalate behavior explicit in router and state transitions.
+3. Emit telemetry for repeated loop failures and escalation categories so recurring problems can become new harness controls.
+4. Revisit convergence and bootstrap hardening only if they remain the highest residual kernel risk after the execution-control slice lands.
+
 - Keep shrinking `tests/scripts/test_codex_workflow.py` where narrow kernel contracts are still mixed into integration coverage.
   Review/UAT and telemetry now have focused suites; the remaining extraction targets are mainly convergence, bootstrap, and any residual single-subsystem assertions.
-- Harden planning convergence and bootstrap contracts.
-  Make discovery, planner, MVP, skeptic, and convergence outputs more mechanical and add fixed regression fixtures for greenfield and bootstrap flows.
 - Tighten the review loop against `code_review.md`.
-  Add tests for stale-guidance detection and required-check enforcement so review remains a blocking kernel gate instead of a prompt convention.
+  Add tests for stale-guidance detection and required-check enforcement so review remains a blocking inferential kernel gate instead of a prompt convention.
+- Harden planning convergence and bootstrap contracts after the control slice above.
+  Make discovery, planner, MVP, skeptic, and convergence outputs more mechanical and add fixed regression fixtures for greenfield and bootstrap flows if that still represents the highest residual kernel risk after execution-control hardening.
 - Verify telemetry as a contract.
-  Extend the focused telemetry suite beyond the extracted execution slice where needed, especially if later bootstrap or convergence work adds new metrics semantics.
+  Extend the focused telemetry suite beyond the extracted execution slice where needed, especially once repeated failure and escalation categories become part of the harness contract.
 
 ### Milestone 2: Audit Completeness
 
@@ -59,7 +77,7 @@
 
 ## Milestone Completeness Snapshot
 
-- Milestone 1: about 60% complete. Router, planning-audit, review/UAT, and telemetry contracts now have focused coverage, but convergence and bootstrap hardening are still the largest kernel-stability gaps.
+- Milestone 1: about 60% complete. Router, planning-audit, review/UAT, and telemetry contracts now have focused coverage, but execution control hardening is the next kernel slice and convergence/bootstrap hardening should be revisited after that if it remains the highest residual risk.
 - Milestone 2: about 30% complete. Direct verification matrices and some approval explicitness exist, but broader audit explainability and brownfield/greenfield parity are still incomplete.
 - Milestone 3: about 15% complete. The plugin shape and core docs exist, but clean-install validation, packaging confidence, and operational support boundaries are still early.
 
