@@ -50,6 +50,7 @@
         "code",
         "summary",
         "blocking_step_id",
+        "resume_status",
         "first_triggered_at",
         "last_triggered_at",
         "occurrence_count"
@@ -78,6 +79,17 @@
             "null"
           ],
           "minLength": 1
+        },
+        "resume_status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "uat_pending",
+            "gap_closure_pending",
+            "replan_required",
+            "ship_pending",
+            "complete"
+          ]
         },
         "details": {
           "type": [

@@ -1125,6 +1125,11 @@ def enter_execution_escalation(
         "summary": str(blocker["summary"]),
         "blocking_step_id": blocker.get("blocking_step_id"),
         "details": blocker.get("details"),
+        "resume_status": (
+            existing.get("resume_status")
+            if same_active_escalation and isinstance(existing, dict)
+            else state["workflow_status"]
+        ),
         "first_triggered_at": existing["first_triggered_at"] if same_active_escalation else now,
         "last_triggered_at": now,
         "occurrence_count": (existing["occurrence_count"] + 1) if same_active_escalation else 1,
@@ -1148,6 +1153,17 @@ def clear_execution_escalation(
     state["workflow_status"] = next_status
     state["escalation"] = None
     return state, previous, changed
+
+
+def escalation_resume_status(state: dict[str, Any]) -> str:
+    validate_state(state)
+    escalation = state.get("escalation")
+    if not isinstance(escalation, dict):
+        return "active"
+    resume_status = escalation.get("resume_status")
+    if resume_status in VALID_WORKFLOW_STATUSES and resume_status != "execution_escalated":
+        return str(resume_status)
+    return "active"
 
 
 def next_stop_decision(state: dict[str, Any]) -> tuple[dict[str, Any], WorkflowDecision, bool]:
@@ -1403,6 +1419,7 @@ def _replan_required_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
 def _execution_escalation_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
     escalation = state["escalation"] or {}
     details_lines = _escalation_details_lines(escalation.get("details"))
+    resume_status = escalation.get("resume_status", "active")
     return (
         "This workflow is escalated and cannot safely continue.\n\n"
         f"Workflow: `{state['workflow_name']}`\n"
@@ -1417,7 +1434,7 @@ def _execution_escalation_prompt(state: dict[str, Any], step: dict[str, Any]) ->
         f"Details:\n{details_lines}\n\n"
         "Fix the blocking condition before continuing.\n"
         f"When the blocker is cleared, run `{STATE_TOOL_COMMAND} resolve-escalation` to return the workflow to "
-        "active execution, then resume or run the next normal state transition."
+        f"`{resume_status}`, then resume or run the next normal state transition."
     )
 
 
@@ -1501,6 +1518,7 @@ def _validate_escalation(escalation: Any) -> None:
         "code",
         "summary",
         "blocking_step_id",
+        "resume_status",
         "first_triggered_at",
         "last_triggered_at",
         "occurrence_count",
@@ -1519,6 +1537,9 @@ def _validate_escalation(escalation: Any) -> None:
         not isinstance(blocking_step_id, str) or not blocking_step_id.strip()
     ):
         raise ValueError("escalation.blocking_step_id must be a non-empty string or null")
+    resume_status = escalation["resume_status"]
+    if resume_status not in VALID_WORKFLOW_STATUSES or resume_status == "execution_escalated":
+        raise ValueError("escalation.resume_status must be a non-escalated workflow status")
     details = escalation.get("details")
     if details is not None and not isinstance(details, (dict, list)):
         raise ValueError("escalation.details must be an object, array, or null")
@@ -1561,6 +1582,8 @@ def _path_is_covered(path: str, candidate: str) -> bool:
 
 def _normalize_coverage_path(value: str) -> str:
     normalized = value.strip().rstrip("/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
     if "::" in normalized:
         node_path, _ = normalized.split("::", 1)
         if node_path.strip():

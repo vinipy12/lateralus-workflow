@@ -93,6 +93,30 @@ def test_workflow_state_review_pending_accepts_pytest_node_id_for_file_target():
     assert persisted_state["steps"][0]["status"] == "review_pending"
 
 
+def test_workflow_state_review_pending_accepts_dot_slash_prefixed_verification_path():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["steps"][0]["verify_cmds"] = ["uv run pytest ./tests/ai/test_embedding_service.py"]
+        state["steps"][0]["verification_targets"] = ["tests/ai/test_embedding_service.py"]
+        workflow_lib.save_state(state, state_path)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "review_pending",
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["workflow_status"] == "active"
+    assert persisted_state["escalation"] is None
+    assert persisted_state["steps"][0]["status"] == "review_pending"
+
+
 def test_final_committed_step_enters_uat_pending_mode():
     workflow_lib = load_workflow_lib()
     state = json.loads(STATE_EXAMPLE_PATH.read_text(encoding="utf-8"))
@@ -291,6 +315,39 @@ def test_resolve_escalation_returns_workflow_to_active_execution():
     assert persisted_state["escalation"] is None
     assert "Start the next execution step." not in response.additional_context
     assert "Do not stop yet." in response.additional_context
+
+
+def test_resolve_escalation_restores_prior_non_active_phase():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["workflow_status"] = "ship_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+
+        escalate_result = run_workflow_state_command(
+            state_path,
+            "set-workflow-status",
+            "execution_escalated",
+            "--override-reason",
+            "manual ship-phase escalation for verification",
+        )
+        escalated_state = workflow_lib.load_state(state_path)
+
+        resolve_result = run_workflow_state_command(
+            state_path,
+            "resolve-escalation",
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert escalate_result.returncode == 0, escalate_result.stderr
+    assert escalated_state["workflow_status"] == "execution_escalated"
+    assert escalated_state["escalation"]["resume_status"] == "ship_pending"
+    assert resolve_result.returncode == 0, resolve_result.stderr
+    assert persisted_state["workflow_status"] == "ship_pending"
+    assert persisted_state["escalation"] is None
 
 
 def test_workflow_state_set_uat_status_passed_updates_state_and_artifact():

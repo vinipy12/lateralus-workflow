@@ -13,6 +13,7 @@ from workflow_lib import (
     VALID_WORKFLOW_STATUSES,
     clear_execution_escalation,
     current_step,
+    escalation_resume_status,
     enter_execution_escalation,
     evaluate_pre_review_sensors,
     find_execution_blocker,
@@ -180,12 +181,13 @@ def main() -> int:
             raise SystemExit(
                 f"resolve-escalation blocked: {blocker['summary']}"
             )
-        state, previous_escalation, _ = clear_execution_escalation(state, next_status="active")
+        resolved_to_status = escalation_resume_status(state)
+        state, previous_escalation, _ = clear_execution_escalation(state, next_status=resolved_to_status)
         save_state(state, args.path)
         _emit_execution_escalation_cleared(
             state,
             previous_escalation=previous_escalation,
-            resolved_to_status="active",
+            resolved_to_status=resolved_to_status,
         )
         print("execution escalation cleared")
         return 0
