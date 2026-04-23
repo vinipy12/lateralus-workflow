@@ -60,6 +60,7 @@ For an active execution workflow:
    - Development ends only when the current step reaches `committed`.
    - `set-step-status ... review_pending` runs deterministic pre-review sensors before inferential review.
    - Review is a hard gate before commit; do not bypass it.
+   - Record review outcomes inline on `set-step-status ... fix_pending|commit_pending` with `--review-summary`, `--scope-confirmed true|false`, `--verification-status passed|blocked`, `--verification-note` when blocked, repeatable `--agents-checked`, `--agents-updated true|false`, and `--finding-count <n>`.
    - Deployment begins only after UAT moves the workflow to `ship_pending`.
 3. Use `python3 .agents/skills/workflow/scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
 4. If execution enters `execution_escalated`, fix the blocker and clear it with `python3 .agents/skills/workflow/scripts/workflow_state.py resolve-escalation`; that restores the workflow to its pre-escalation phase before normal execution resumes.

@@ -29,6 +29,60 @@ def _build_execution_state(workflow_lib, tmpdir: str) -> dict:
     )
 
 
+def _review_args(
+    *,
+    summary: str,
+    scope_confirmed: bool = True,
+    verification_status: str = "passed",
+    verification_note: str | None = None,
+    agents_checked: list[str] | None = None,
+    agents_updated: bool = False,
+    finding_count: int,
+) -> tuple[str, ...]:
+    args = [
+        "--review-summary",
+        summary,
+        "--scope-confirmed",
+        "true" if scope_confirmed else "false",
+        "--verification-status",
+        verification_status,
+    ]
+    if verification_note is not None:
+        args.extend(["--verification-note", verification_note])
+    for path in agents_checked or ["AGENTS.md"]:
+        args.extend(["--agents-checked", path])
+    args.extend(
+        [
+            "--agents-updated",
+            "true" if agents_updated else "false",
+            "--finding-count",
+            str(finding_count),
+        ]
+    )
+    return tuple(args)
+
+
+def _prepare_review_pending_state(
+    workflow_lib,
+    tmpdir: str,
+    *,
+    agents_paths: list[str] | None = None,
+) -> Path:
+    state_path = Path(tmpdir) / "state.json"
+    state = _build_execution_state(workflow_lib, tmpdir)
+    if agents_paths is not None:
+        state["steps"][0]["agents_paths"] = agents_paths
+    workflow_lib.save_state(state, state_path)
+    review_result = run_workflow_state_command(
+        state_path,
+        "set-step-status",
+        "step-1",
+        "review_pending",
+    )
+    assert review_result.returncode == 0, review_result.stderr
+    return state_path
+
+
 def test_review_pending_step_blocks_for_review_gate():
     workflow_lib = load_workflow_lib()
     state = json.loads(STATE_EXAMPLE_PATH.read_text(encoding="utf-8"))
@@ -40,7 +94,9 @@ def test_review_pending_step_blocks_for_review_gate():
     assert decision.action == "block"
     assert "code_review.md" in decision.prompt
     assert "python3 .codex/workflow/scripts/workflow_state.py set-step-status step-1 commit_pending" in decision.prompt
-    assert "set-step-status step-1 commit_pending" in decision.prompt
+    assert "--scope-confirmed true" in decision.prompt
+    assert "--agents-checked AGENTS.md" in decision.prompt
+    assert "--finding-count 0" in decision.prompt
 
 
 def test_workflow_state_review_pending_requires_pre_review_sensors():
@@ -186,70 +242,225 @@ def test_replan_required_blocks_with_follow_up_planning_prompt():
     assert "follow-up planning session" in decision.prompt
 
 
-def test_workflow_state_set_step_status_review_transitions_persist_state():
+def test_workflow_state_commit_pending_rejected_without_review_evidence():
     workflow_lib = load_workflow_lib()
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        state_path = Path(tmpdir) / "state.json"
-        state = _build_execution_state(workflow_lib, tmpdir)
-        workflow_lib.save_state(state, state_path)
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
 
-        review_result = run_workflow_state_command(
-            state_path,
-            "set-step-status",
-            "step-1",
-            "review_pending",
-        )
-        state_after_review = workflow_lib.load_state(state_path)
-
-        fix_result = run_workflow_state_command(
-            state_path,
-            "set-step-status",
-            "step-1",
-            "fix_pending",
-            "--review-summary",
-            "Missing regression assertion.",
-        )
-        state_after_fix = workflow_lib.load_state(state_path)
-
-        rereview_result = run_workflow_state_command(
-            state_path,
-            "set-step-status",
-            "step-1",
-            "review_pending",
-        )
-        state_after_rereview = workflow_lib.load_state(state_path)
-
-        pass_result = run_workflow_state_command(
+        result = run_workflow_state_command(
             state_path,
             "set-step-status",
             "step-1",
             "commit_pending",
-            "--review-summary",
-            "review passed",
-        )
-        state_after_pass = workflow_lib.load_state(state_path)
-
-        commit_result = run_workflow_state_command(
-            state_path,
-            "set-step-status",
-            "step-1",
-            "committed",
         )
         persisted_state = workflow_lib.load_state(state_path)
 
-    assert review_result.returncode == 0, review_result.stderr
-    assert state_after_review["steps"][0]["status"] == "review_pending"
-    assert fix_result.returncode == 0, fix_result.stderr
-    assert state_after_fix["steps"][0]["status"] == "fix_pending"
-    assert state_after_fix["steps"][0]["review_summary"] == "Missing regression assertion."
-    assert rereview_result.returncode == 0, rereview_result.stderr
-    assert state_after_rereview["steps"][0]["status"] == "review_pending"
-    assert pass_result.returncode == 0, pass_result.stderr
-    assert state_after_pass["steps"][0]["status"] == "commit_pending"
-    assert state_after_pass["steps"][0]["review_summary"] == "review passed"
-    assert commit_result.returncode == 0, commit_result.stderr
-    assert persisted_state["steps"][0]["status"] == "committed"
+    assert result.returncode != 0
+    assert "set-step-status commit_pending rejected" in result.stderr
+    assert "--review-summary" in result.stderr
+    assert persisted_state["steps"][0]["status"] == "review_pending"
+    assert persisted_state["steps"][0]["review_record"] is None
+
+
+def test_workflow_state_commit_pending_rejected_when_finding_count_is_positive():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(summary="review passed", finding_count=1),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode != 0
+    assert "--finding-count 0" in result.stderr
+    assert persisted_state["steps"][0]["status"] == "review_pending"
+
+
+def test_workflow_state_commit_pending_rejected_when_scope_is_not_confirmed():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(summary="review passed", scope_confirmed=False, finding_count=0),
+        )
+
+    assert result.returncode != 0
+    assert "--scope-confirmed true" in result.stderr
+
+
+def test_workflow_state_commit_pending_rejected_when_verification_is_blocked():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="review passed",
+                verification_status="blocked",
+                verification_note="pytest is failing in CI",
+                finding_count=0,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "--verification-status passed" in result.stderr
+
+
+def test_workflow_state_commit_pending_rejected_when_agents_checked_omit_required_path():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(
+            workflow_lib,
+            tmpdir,
+            agents_paths=["AGENTS.md", "docs/AGENTS.md"],
+        )
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="review passed",
+                agents_checked=["AGENTS.md"],
+                finding_count=0,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "docs/AGENTS.md" in result.stderr
+
+
+def test_workflow_state_fix_pending_rejected_when_finding_count_is_zero():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "fix_pending",
+            *_review_args(summary="Missing regression assertion.", finding_count=0),
+        )
+
+    assert result.returncode != 0
+    assert "greater than 0" in result.stderr
+
+
+def test_workflow_state_fix_pending_rejected_when_blocked_verification_has_no_note():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "fix_pending",
+            *_review_args(
+                summary="Missing regression assertion.",
+                verification_status="blocked",
+                finding_count=1,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "--verification-note" in result.stderr
+
+
+def test_workflow_state_fix_pending_persists_review_record():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "fix_pending",
+            *_review_args(summary="Missing regression assertion.", finding_count=2),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+        review_record = persisted_state["steps"][0]["review_record"]
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["steps"][0]["status"] == "fix_pending"
+    assert persisted_state["steps"][0]["review_summary"] == "Missing regression assertion."
+    assert review_record["outcome"] == "failed"
+    assert review_record["summary"] == "Missing regression assertion."
+    assert review_record["scope_confirmed"] is True
+    assert review_record["verification_status"] == "passed"
+    assert review_record["verification_note"] is None
+    assert review_record["agents_checked"] == ["AGENTS.md"]
+    assert review_record["agents_updated"] is False
+    assert review_record["finding_count"] == 2
+    assert review_record["checked_at"].endswith("Z")
+
+
+def test_workflow_state_commit_pending_persists_review_record():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(summary="review passed", finding_count=0),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+        review_record = persisted_state["steps"][0]["review_record"]
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["steps"][0]["status"] == "commit_pending"
+    assert review_record["outcome"] == "passed"
+    assert review_record["finding_count"] == 0
+    assert review_record["verification_status"] == "passed"
+
+
+def test_workflow_state_review_summary_compatibility_remains_intact():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(summary="review passed", finding_count=0),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["steps"][0]["review_summary"] == "review passed"
+    assert persisted_state["steps"][0]["review_record"]["summary"] == "review passed"
 
 
 def test_resume_surfaces_execution_escalation_for_invalid_review_state():
@@ -510,6 +721,22 @@ def test_next_stop_decision_escalates_shipped_state_inconsistency():
     assert decision.action == "escalate"
     assert next_state["workflow_status"] == "execution_escalated"
     assert next_state["escalation"]["code"] == "manual_override"
+
+
+def test_shipped_state_inconsistency_prompt_requires_manual_reconciliation():
+    workflow_lib = load_workflow_lib()
+    state = workflow_lib.build_state_from_plan_spec(example_plan(), plan_path="PLANS.md")
+    state["steps"][0]["status"] = "shipped"
+
+    next_state, decision, changed = workflow_lib.next_stop_decision(state)
+
+    assert changed is True
+    assert next_state["workflow_status"] == "execution_escalated"
+    assert "set-workflow-status ship_pending --override-reason" in (decision.prompt or "")
+    assert "set-workflow-status complete" in (decision.prompt or "")
+    assert "Do not run `python3 .codex/workflow/scripts/workflow_state.py resolve-escalation`" in (
+        decision.prompt or ""
+    )
 
 
 def test_workflow_state_set_step_status_shipped_requires_ship_pending_and_committed():

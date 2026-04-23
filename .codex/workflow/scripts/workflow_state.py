@@ -9,8 +9,11 @@ from pathlib import Path
 from metrics_lib import append_metrics_event, load_metrics_events
 from workflow_lib import (
     DEFAULT_STATE_PATH,
+    VALID_REVIEW_VERIFICATION_STATUSES,
     VALID_STEP_STATUSES,
     VALID_WORKFLOW_STATUSES,
+    build_review_record_for_status,
+    canonical_review_summary,
     clear_execution_escalation,
     current_step,
     escalation_resume_status,
@@ -42,6 +45,16 @@ def main() -> int:
     step_parser.add_argument("step_id")
     step_parser.add_argument("status", choices=sorted(VALID_STEP_STATUSES))
     step_parser.add_argument("--review-summary", default=None)
+    step_parser.add_argument("--scope-confirmed", choices=("true", "false"), default=None)
+    step_parser.add_argument(
+        "--verification-status",
+        choices=sorted(VALID_REVIEW_VERIFICATION_STATUSES),
+        default=None,
+    )
+    step_parser.add_argument("--verification-note", default=None)
+    step_parser.add_argument("--agents-checked", action="append", default=None)
+    step_parser.add_argument("--agents-updated", choices=("true", "false"), default=None)
+    step_parser.add_argument("--finding-count", type=int, default=None)
     step_parser.add_argument("--override-reason", default=None)
     step_parser.add_argument("--path", type=Path, default=DEFAULT_STATE_PATH)
 
@@ -104,12 +117,28 @@ def main() -> int:
                 _emit_deterministic_sensor_failure(state, step, sensor_result["failures"])
                 _emit_execution_escalation_entered(state, previous_status=previous_status)
                 raise SystemExit(_render_sensor_failure_message(sensor_result["failures"]))
+        review_record, review_errors = build_review_record_for_status(
+            step,
+            new_status=args.status,
+            review_summary=args.review_summary,
+            scope_confirmed=_parse_explicit_bool(args.scope_confirmed),
+            verification_status=args.verification_status,
+            verification_note=args.verification_note,
+            agents_checked=args.agents_checked,
+            agents_updated=_parse_explicit_bool(args.agents_updated),
+            finding_count=args.finding_count,
+        )
+        if review_errors:
+            raise SystemExit(_render_review_validation_errors(args.status, review_errors))
         _validate_step_status_change(state, step, new_status=args.status)
         step["status"] = args.status
-        if args.review_summary is not None:
+        if review_record is not None:
+            step["review_record"] = review_record
+            step["review_summary"] = review_record["summary"]
+        elif args.review_summary is not None:
             step["review_summary"] = args.review_summary
         save_state(state, args.path)
-        _emit_step_metrics(state, step, status=args.status, review_summary=args.review_summary)
+        _emit_step_metrics(state, step, status=args.status)
         _emit_override_if_needed(state, command="set-step-status", reason=args.override_reason, target=args.step_id)
         print(f"{args.step_id} -> {args.status}")
         return 0
@@ -328,13 +357,31 @@ def _normalize_override_reason(reason: str | None) -> str | None:
     return normalized or None
 
 
-def _emit_step_metrics(state: dict, step: dict, *, status: str, review_summary: str | None) -> None:
+def _parse_explicit_bool(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    return value == "true"
+
+
+def _emit_step_metrics(state: dict, step: dict, *, status: str) -> None:
+    review_record = step.get("review_record") if isinstance(step.get("review_record"), dict) else None
     details = {
         "workflow_name": state["workflow_name"],
         "step_id": step["id"],
         "step_title": step["title"],
-        "review_summary": review_summary or step.get("review_summary"),
+        "review_summary": canonical_review_summary(step),
     }
+    if review_record is not None:
+        details.update(
+            {
+                "scope_confirmed": review_record["scope_confirmed"],
+                "verification_status": review_record["verification_status"],
+                "verification_note": review_record["verification_note"],
+                "agents_checked_count": len(review_record["agents_checked"]),
+                "agents_updated": review_record["agents_updated"],
+                "finding_count": review_record["finding_count"],
+            }
+        )
     if status == "fix_pending":
         repeated_review_failure = _is_repeated_review_failure(state, step_id=step["id"])
         append_metrics_event(state["metrics_dir"], "review_failed", details=details)
@@ -430,6 +477,13 @@ def _render_sensor_failure_message(failures: list[dict]) -> str:
     lines = ["set-step-status review_pending blocked by deterministic pre-review sensors:"]
     for failure in failures:
         lines.append(f"- [{failure['code']}] {failure['summary']}")
+    return "\n".join(lines)
+
+
+def _render_review_validation_errors(status: str, errors: list[str]) -> str:
+    lines = [f"set-step-status {status} rejected:"]
+    for error in errors:
+        lines.append(f"- {error}")
     return "\n".join(lines)
 
 

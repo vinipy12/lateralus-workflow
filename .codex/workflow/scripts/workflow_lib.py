@@ -48,6 +48,8 @@ VALID_STEP_STATUSES = {
     "shipped",
 }
 VALID_UAT_STATUSES = {"pending", "passed", "failed_gap", "failed_replan"}
+VALID_REVIEW_OUTCOMES = {"pending", "passed", "failed"}
+VALID_REVIEW_VERIFICATION_STATUSES = {"passed", "blocked"}
 VALID_ESCALATION_CODES = {
     "verification_missing",
     "verification_failed",
@@ -415,6 +417,7 @@ def _validate_step(step: dict[str, Any]) -> None:
         "commit_message",
         "status",
         "review_summary",
+        "review_record",
     }
     missing = sorted(required_fields - step.keys())
     if missing:
@@ -431,12 +434,13 @@ def _validate_step(step: dict[str, Any]) -> None:
     ):
         if not isinstance(step[field_name], str) or not step[field_name].strip():
             raise ValueError(f"{field_name} must be a non-empty string for {step['id']}")
-    for list_name in ("context", "constraints", "done_when", "verify_cmds", "agents_paths"):
+    for list_name in ("context", "constraints", "done_when", "verify_cmds"):
         if not isinstance(step[list_name], list):
             raise ValueError(f"{list_name} must be a list for {step['id']}")
         for item in step[list_name]:
             if not isinstance(item, str) or not item.strip():
                 raise ValueError(f"{list_name} must contain non-empty strings for {step['id']}")
+    _ensure_agents_paths(step["agents_paths"], field_name=f"agents_paths for {step['id']}")
     if "justification" in step and (
         not isinstance(step["justification"], str) or not step["justification"].strip()
     ):
@@ -463,6 +467,7 @@ def _validate_step(step: dict[str, Any]) -> None:
                 raise ValueError(f"{list_name} must contain non-empty strings for {step['id']}")
     if "wave" in step and not _is_positive_int(step["wave"]):
         raise ValueError(f"wave must be a positive integer for {step['id']}")
+    _validate_review_record(step["review_record"], step=step)
 
 
 def _coerce_plan_specs(parsed: Any, source_path: Path) -> list[dict[str, Any]]:
@@ -546,7 +551,7 @@ def _normalize_plan_step(raw_step: dict[str, Any], *, index: int) -> dict[str, A
     constraints = _ensure_string_list(raw_step.get("constraints", []), field_name=f"constraints for {step_id}")
     done_when = _ensure_string_list(raw_step.get("done_when", []), field_name=f"done_when for {step_id}")
     verify_cmds = _ensure_string_list(raw_step.get("verify_cmds", []), field_name=f"verify_cmds for {step_id}")
-    agents_paths = _ensure_string_list(raw_step.get("agents_paths", []), field_name=f"agents_paths for {step_id}")
+    agents_paths = _ensure_agents_paths(raw_step.get("agents_paths", []), field_name=f"agents_paths for {step_id}")
     if not agents_paths:
         agents_paths = infer_agents_paths(context)
     if not agents_paths:
@@ -576,6 +581,7 @@ def _normalize_plan_step(raw_step: dict[str, Any], *, index: int) -> dict[str, A
         "commit_message": commit_message,
         "status": status,
         "review_summary": review_summary,
+        "review_record": None,
     }
     justification = str(raw_step.get("justification") or "").strip()
     if justification:
@@ -807,7 +813,7 @@ def _validate_plan_step(
             raise ValueError(f"{list_name} must be non-empty for {step_id}")
 
     if "agents_paths" in step:
-        _ensure_string_list(step["agents_paths"], field_name=f"agents_paths for {step_id}")
+        _ensure_agents_paths(step["agents_paths"], field_name=f"agents_paths for {step_id}")
 
     if "justification" in step and (
         not isinstance(step["justification"], str) or not step["justification"].strip()
@@ -878,6 +884,14 @@ def _normalize_state_compat(state: Any, path: Path) -> dict[str, Any]:
     normalized.setdefault("uat_artifact_path", str(state_root / "uat.json"))
     normalized.setdefault("metrics_dir", str(state_root / "metrics"))
     normalized.setdefault("escalation", None)
+    steps = normalized.get("steps")
+    if isinstance(steps, list):
+        normalized["steps"] = [
+            {**step, "review_record": step.get("review_record")}
+            if isinstance(step, dict)
+            else step
+            for step in steps
+        ]
     return normalized
 
 
@@ -892,6 +906,131 @@ def _ensure_string_list(value: Any, *, field_name: str) -> list[str]:
             raise ValueError(f"{field_name} must contain non-empty strings")
         normalized.append(item.strip())
     return normalized
+
+
+def _ensure_agents_paths(value: Any, *, field_name: str) -> list[str]:
+    items = _ensure_string_list(value, field_name=field_name)
+    normalized = [_normalize_repo_relative_path(item, field_name=field_name) for item in items]
+    if any(not path.endswith("AGENTS.md") for path in normalized):
+        raise ValueError(f"{field_name} must contain only repo-relative AGENTS.md paths")
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"{field_name} must not contain duplicates")
+    return normalized
+
+
+def canonical_review_summary(step: dict[str, Any]) -> str | None:
+    review_record = step.get("review_record")
+    if isinstance(review_record, dict):
+        summary = review_record.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            return summary.strip()
+    summary = step.get("review_summary")
+    if isinstance(summary, str) and summary.strip():
+        return summary.strip()
+    return None
+
+
+def build_review_record_for_status(
+    step: dict[str, Any],
+    *,
+    new_status: str,
+    review_summary: str | None,
+    scope_confirmed: bool | None,
+    verification_status: str | None,
+    verification_note: str | None,
+    agents_checked: list[str] | None,
+    agents_updated: bool | None,
+    finding_count: int | None,
+    checked_at: str | None = None,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    if new_status not in {"fix_pending", "commit_pending"}:
+        return None, []
+
+    errors: list[str] = []
+    summary = _normalize_optional_text(review_summary)
+    if summary is None:
+        errors.append(f"set-step-status {new_status} requires --review-summary")
+    if scope_confirmed is None:
+        errors.append(f"set-step-status {new_status} requires --scope-confirmed true|false")
+    if verification_status is None:
+        errors.append(
+            f"set-step-status {new_status} requires --verification-status passed|blocked"
+        )
+    if agents_checked is None or not agents_checked:
+        errors.append(f"set-step-status {new_status} requires at least one --agents-checked path")
+    if agents_updated is None:
+        errors.append(f"set-step-status {new_status} requires --agents-updated true|false")
+    if finding_count is None:
+        errors.append(f"set-step-status {new_status} requires --finding-count <n>")
+    note = _normalize_optional_text(verification_note)
+    if verification_status == "blocked" and note is None:
+        errors.append(
+            f"set-step-status {new_status} requires --verification-note when --verification-status blocked"
+        )
+    if errors:
+        return None, errors
+
+    normalized_agents_checked = list(agents_checked or [])
+    try:
+        normalized_agents_checked = _ensure_agents_paths(
+            agents_checked,
+            field_name=f"review_record.agents_checked for {step['id']}",
+        )
+    except ValueError:
+        pass
+
+    review_record = {
+        "outcome": "passed" if new_status == "commit_pending" else "failed",
+        "summary": summary,
+        "scope_confirmed": scope_confirmed,
+        "verification_status": verification_status,
+        "verification_note": note,
+        "agents_checked": normalized_agents_checked,
+        "agents_updated": agents_updated,
+        "finding_count": finding_count,
+        "checked_at": checked_at or _utc_now_iso(),
+    }
+    return review_record, validate_review_transition(step, new_status=new_status, review_record=review_record)
+
+
+def validate_review_transition(
+    step: dict[str, Any],
+    *,
+    new_status: str,
+    review_record: dict[str, Any],
+) -> list[str]:
+    errors: list[str] = []
+    if review_record["scope_confirmed"] is not True:
+        errors.append(
+            f"set-step-status {new_status} requires --scope-confirmed true for {step['id']}"
+        )
+
+    expected_outcome = "passed" if new_status == "commit_pending" else "failed"
+    if review_record["outcome"] != expected_outcome:
+        errors.append(
+            f"set-step-status {new_status} requires review_record.outcome {expected_outcome}"
+        )
+
+    finding_count = review_record["finding_count"]
+    verification_status = review_record["verification_status"]
+    if new_status == "commit_pending":
+        if finding_count != 0:
+            errors.append("set-step-status commit_pending requires --finding-count 0")
+        if verification_status != "passed":
+            errors.append(
+                "set-step-status commit_pending requires --verification-status passed"
+            )
+    else:
+        if finding_count <= 0:
+            errors.append("set-step-status fix_pending requires --finding-count greater than 0")
+
+    try:
+        _validate_review_record(review_record, step=step)
+    except ValueError as exc:
+        message = str(exc)
+        if message not in errors:
+            errors.append(message)
+    return errors
 
 
 def _default_commit_message(title: str, *, index: int) -> str:
@@ -1309,6 +1448,33 @@ def _implementation_prompt(state: dict[str, Any], step: dict[str, Any], *, is_st
 
 
 def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
+    fix_command = _review_status_command(
+        step,
+        status="fix_pending",
+        review_summary="<short summary>",
+        verification_status="passed",
+        verification_note=None,
+        agents_updated="false",
+        finding_count="1",
+    )
+    blocked_fix_command = _review_status_command(
+        step,
+        status="fix_pending",
+        review_summary="<short summary>",
+        verification_status="blocked",
+        verification_note="<why verification is blocked>",
+        agents_updated="false",
+        finding_count="1",
+    )
+    commit_command = _review_status_command(
+        step,
+        status="commit_pending",
+        review_summary="review passed",
+        verification_status="passed",
+        verification_note=None,
+        agents_updated="false",
+        finding_count="0",
+    )
     return (
         "Run the review gate now.\n\n"
         f"Review only the current execution step `{step['id']}` - {step['title']} using `{state['review_path']}` and the same bug-focused standards as `/review`.\n"
@@ -1316,13 +1482,17 @@ def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         "Treat the review as blocking:\n"
         "- Findings first, ordered by severity.\n"
         "- Focus on bugs, regressions, risky behavior, stale AGENTS guidance, and missing verification.\n"
-        "- Do not pad with style-only feedback.\n\n"
+        "- Do not pad with style-only feedback.\n"
+        "- Record scope confirmation for the current step.\n"
+        "- Record whether verification passed or is blocked, and include the blocker note when blocked.\n"
+        "- Record every `AGENTS.md` file checked, whether any required updates were made, and the material finding count.\n\n"
         "If you find issues:\n"
-        f"- Run `{STATE_TOOL_COMMAND} set-step-status {step['id']} fix_pending --review-summary \"<short summary>\"`.\n"
+        f"- Run `{fix_command}`.\n"
+        f"- If verification is blocked, run `{blocked_fix_command}` instead.\n"
         "- Fix the issues, rerun the step verification, and then run "
         f"`{STATE_TOOL_COMMAND} set-step-status {step['id']} review_pending` before trying to stop again.\n\n"
         "If the review finds no new issues:\n"
-        f"- Run `{STATE_TOOL_COMMAND} set-step-status {step['id']} commit_pending --review-summary \"review passed\"`.\n"
+        f"- Run `{commit_command}`.\n"
         "- Continue so the workflow can move to the commit phase."
     )
 
@@ -1332,12 +1502,49 @@ def _fix_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
     return (
         "The review gate still has open findings.\n\n"
         f"Current step: `{step['id']}` - {step['title']}\n"
-        f"Last review summary: {step['review_summary'] or 'not recorded'}\n\n"
+        f"Last review summary: {canonical_review_summary(step) or 'not recorded'}\n\n"
         "Fix the findings for this step only, rerun the relevant verification, and keep the diff scoped.\n\n"
         f"Verification commands:\n{verify_lines}\n\n"
         "When the fixes are ready for another review pass, run "
         f"`{STATE_TOOL_COMMAND} set-step-status {step['id']} review_pending` and continue."
     )
+
+
+def _review_status_command(
+    step: dict[str, Any],
+    *,
+    status: str,
+    review_summary: str,
+    verification_status: str,
+    verification_note: str | None,
+    agents_updated: str,
+    finding_count: str,
+) -> str:
+    command = [
+        STATE_TOOL_COMMAND,
+        "set-step-status",
+        step["id"],
+        status,
+        "--review-summary",
+        shlex.quote(review_summary),
+        "--scope-confirmed",
+        "true",
+        "--verification-status",
+        verification_status,
+    ]
+    if verification_note is not None:
+        command.extend(["--verification-note", shlex.quote(verification_note)])
+    for path in step["agents_paths"]:
+        command.extend(["--agents-checked", shlex.quote(path)])
+    command.extend(
+        [
+            "--agents-updated",
+            agents_updated,
+            "--finding-count",
+            finding_count,
+        ]
+    )
+    return " ".join(command)
 
 
 def _commit_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
@@ -1420,6 +1627,13 @@ def _execution_escalation_prompt(state: dict[str, Any], step: dict[str, Any]) ->
     escalation = state["escalation"] or {}
     details_lines = _escalation_details_lines(escalation.get("details"))
     resume_status = escalation.get("resume_status", "active")
+    if escalation.get("code") == "manual_override" and step["status"] == "shipped":
+        return _shipped_state_reconciliation_prompt_with_details(
+            state,
+            step,
+            escalation=escalation,
+            details_lines=details_lines,
+        )
     return (
         "This workflow is escalated and cannot safely continue.\n\n"
         f"Workflow: `{state['workflow_name']}`\n"
@@ -1473,14 +1687,40 @@ def _ship_completion_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
 
 
 def _shipped_state_reconciliation_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
+    return _shipped_state_reconciliation_prompt_with_details(
+        state,
+        step,
+        escalation=state.get("escalation"),
+    )
+
+
+def _shipped_state_reconciliation_prompt_with_details(
+    state: dict[str, Any],
+    step: dict[str, Any],
+    *,
+    escalation: dict[str, Any] | None,
+    details_lines: str | None = None,
+) -> str:
+    escalation = escalation or {}
+    details_lines = details_lines or _escalation_details_lines(escalation.get("details"))
     return (
         "The workflow state is inconsistent and needs manual reconciliation.\n\n"
         f"Workflow: `{state['workflow_name']}`\n"
         f"Workflow status: `{state['workflow_status']}`\n"
         f"Current step: `{step['id']}` - {step['title']}\n"
-        f"Current step status: `{step['status']}`\n\n"
-        "Do not keep implementing. If publish really succeeded, reconcile the workflow state with explicit "
-        "overrides or cancel the workflow before continuing."
+        f"Current step status: `{step['status']}`\n"
+        f"Escalation category: `{escalation.get('code', 'manual_override')}`\n"
+        f"Reason: {escalation.get('summary', 'no summary recorded')}\n\n"
+        f"Details:\n{details_lines}\n\n"
+        "Do not run `"
+        f"{STATE_TOOL_COMMAND} resolve-escalation"
+        "` for this blocker; it requires explicit state reconciliation.\n"
+        "If publish really succeeded:\n"
+        f"- Run `{STATE_TOOL_COMMAND} set-workflow-status ship_pending --override-reason "
+        "\"reconcile shipped state after successful publish\"`.\n"
+        f"- Run `{STATE_TOOL_COMMAND} set-workflow-status complete`.\n"
+        "If publish did not succeed or the step should not be `shipped`, cancel the workflow or repair the state "
+        "artifact before continuing."
     )
 
 
@@ -1507,6 +1747,110 @@ def _unique_preserving_order(values: list[str]) -> list[str]:
             seen.add(value)
             ordered.append(value)
     return ordered
+
+
+def _normalize_optional_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _normalize_repo_relative_path(value: str, *, field_name: str) -> str:
+    normalized = value.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if not normalized or normalized == "." or normalized.startswith("/"):
+        raise ValueError(f"{field_name} must contain repo-relative paths")
+    parts = Path(normalized).parts
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"{field_name} must contain repo-relative paths")
+    return Path(*parts).as_posix()
+
+
+def _validate_review_record(review_record: Any, *, step: dict[str, Any]) -> None:
+    if review_record is None:
+        return
+    if not isinstance(review_record, dict):
+        raise ValueError(f"review_record must be an object or null for {step['id']}")
+    required_fields = {
+        "outcome",
+        "summary",
+        "scope_confirmed",
+        "verification_status",
+        "verification_note",
+        "agents_checked",
+        "agents_updated",
+        "finding_count",
+        "checked_at",
+    }
+    missing = sorted(required_fields - review_record.keys())
+    if missing:
+        raise ValueError(f"review_record missing fields for {step['id']}: {', '.join(missing)}")
+    outcome = review_record["outcome"]
+    if outcome not in VALID_REVIEW_OUTCOMES:
+        raise ValueError(f"invalid review_record.outcome for {step['id']}: {outcome}")
+    summary = review_record["summary"]
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError(f"review_record.summary must be a non-empty string for {step['id']}")
+    scope_confirmed = review_record["scope_confirmed"]
+    if not isinstance(scope_confirmed, bool):
+        raise ValueError(f"review_record.scope_confirmed must be a boolean for {step['id']}")
+    verification_status = review_record["verification_status"]
+    if verification_status not in VALID_REVIEW_VERIFICATION_STATUSES:
+        raise ValueError(
+            f"invalid review_record.verification_status for {step['id']}: {verification_status}"
+        )
+    verification_note = review_record["verification_note"]
+    if verification_note is not None and (
+        not isinstance(verification_note, str) or not verification_note.strip()
+    ):
+        raise ValueError(
+            f"review_record.verification_note must be a non-empty string or null for {step['id']}"
+        )
+    if verification_status == "blocked" and _normalize_optional_text(verification_note) is None:
+        raise ValueError(
+            f"review_record.verification_note is required when verification_status is blocked for {step['id']}"
+        )
+    agents_checked = _ensure_agents_paths(
+        review_record["agents_checked"],
+        field_name=f"review_record.agents_checked for {step['id']}",
+    )
+    required_agents_paths = _ensure_agents_paths(step["agents_paths"], field_name=f"agents_paths for {step['id']}")
+    missing_agents_paths = [
+        path for path in required_agents_paths if path not in agents_checked
+    ]
+    extra_agents_paths = [
+        path for path in agents_checked if path not in required_agents_paths
+    ]
+    if extra_agents_paths:
+        raise ValueError(
+            "review_record.agents_checked contains paths outside agents_paths for "
+            f"{step['id']}: {', '.join(extra_agents_paths)}"
+        )
+    if missing_agents_paths:
+        raise ValueError(
+            "review_record.agents_checked must cover every agents_paths entry for "
+            f"{step['id']}: {', '.join(missing_agents_paths)}"
+        )
+    if not isinstance(review_record["agents_updated"], bool):
+        raise ValueError(f"review_record.agents_updated must be a boolean for {step['id']}")
+    finding_count = review_record["finding_count"]
+    if not isinstance(finding_count, int) or isinstance(finding_count, bool) or finding_count < 0:
+        raise ValueError(f"review_record.finding_count must be a non-negative integer for {step['id']}")
+    if outcome == "passed" and finding_count != 0:
+        raise ValueError(f"review_record.outcome passed requires finding_count 0 for {step['id']}")
+    if outcome == "failed" and finding_count <= 0:
+        raise ValueError(f"review_record.outcome failed requires finding_count > 0 for {step['id']}")
+    checked_at = review_record["checked_at"]
+    if not isinstance(checked_at, str) or not checked_at.strip():
+        raise ValueError(f"review_record.checked_at must be a non-empty string for {step['id']}")
+    try:
+        datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"review_record.checked_at must be an ISO-8601 timestamp for {step['id']}"
+        ) from exc
 
 
 def _validate_escalation(escalation: Any) -> None:

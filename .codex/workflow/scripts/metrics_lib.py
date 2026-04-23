@@ -94,6 +94,11 @@ def build_scorecard(events: list[dict[str, Any]]) -> dict[str, Any]:
             queue.append({"started_at": timestamp, "green_recorded": False, "escalation_count": 0})
             continue
 
+        if event == "execution_activated":
+            if not queue:
+                queue.append({"started_at": timestamp, "green_recorded": False, "escalation_count": 0})
+            continue
+
         if event == "execution_escalation_entered":
             category = str(entry.get("category") or "").strip()
             if category:

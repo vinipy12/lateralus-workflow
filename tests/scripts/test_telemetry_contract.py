@@ -31,6 +31,38 @@ def _build_execution_state(workflow_lib, tmpdir: str) -> dict:
     )
 
 
+def _review_args(
+    *,
+    summary: str,
+    verification_status: str = "passed",
+    verification_note: str | None = None,
+    agents_checked: list[str] | None = None,
+    agents_updated: bool = False,
+    finding_count: int,
+) -> tuple[str, ...]:
+    args = [
+        "--review-summary",
+        summary,
+        "--scope-confirmed",
+        "true",
+        "--verification-status",
+        verification_status,
+    ]
+    if verification_note is not None:
+        args.extend(["--verification-note", verification_note])
+    for path in agents_checked or ["AGENTS.md"]:
+        args.extend(["--agents-checked", path])
+    args.extend(
+        [
+            "--agents-updated",
+            "true" if agents_updated else "false",
+            "--finding-count",
+            str(finding_count),
+        ]
+    )
+    return tuple(args)
+
+
 def test_approve_planning_uses_planning_metrics_root_when_execution_path_differs():
     planning_lib = load_planning_lib()
     workflow_router = load_workflow_router_lib()
@@ -191,6 +223,30 @@ def test_metrics_scorecard_summarizes_escalations_and_repeated_loops():
     assert scorecard["escalation_frequency"]["latest_per_workflow"] == 1
 
 
+def test_metrics_scorecard_starts_session_on_direct_execution_activation():
+    metrics_lib = load_metrics_lib()
+
+    scorecard = metrics_lib.build_scorecard(
+        [
+            {"event": "execution_activated", "timestamp": "2026-01-01T00:00:00Z"},
+            {
+                "event": "execution_escalation_entered",
+                "timestamp": "2026-01-01T00:00:05Z",
+                "category": "manual_override",
+            },
+            {"event": "uat_passed", "timestamp": "2026-01-01T00:00:20Z"},
+            {"event": "workflow_shipped", "timestamp": "2026-01-01T00:00:30Z"},
+        ]
+    )
+
+    assert scorecard["counts"]["execution_activated"] == 1
+    assert scorecard["escalation_counts_by_category"] == {"manual_override": 1}
+    assert scorecard["escalation_frequency"]["total"] == 1
+    assert scorecard["escalation_frequency"]["latest_per_workflow"] == 1
+    assert scorecard["time_to_green"]["latest_seconds"] == 20.0
+    assert scorecard["time_to_ship"]["latest_seconds"] == 30.0
+
+
 def test_metrics_scorecard_drops_canceled_session_from_timing_queue():
     metrics_lib = load_metrics_lib()
 
@@ -249,8 +305,7 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
                 "set-step-status",
                 "step-1",
                 "fix_pending",
-                "--review-summary",
-                "Missing regression assertion.",
+                *_review_args(summary="Missing regression assertion.", finding_count=1),
             ),
             (
                 "set-step-status",
@@ -261,8 +316,7 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
                 "set-step-status",
                 "step-1",
                 "commit_pending",
-                "--review-summary",
-                "review passed",
+                *_review_args(summary="review passed", finding_count=0),
             ),
             (
                 "set-step-status",
@@ -290,8 +344,7 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
                 "set-step-status",
                 "step-1",
                 "commit_pending",
-                "--review-summary",
-                "gap fix review passed",
+                *_review_args(summary="gap fix review passed", finding_count=0),
             ),
             (
                 "set-step-status",
@@ -342,6 +395,20 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
     assert scorecard["counts"]["uat_failed_gap"] == 1
     assert scorecard["counts"]["uat_passed"] == 1
     assert scorecard["counts"]["workflow_shipped"] == 1
+    first_review_failed = events[0]
+    first_review_passed = events[1]
+    assert first_review_failed["scope_confirmed"] is True
+    assert first_review_failed["verification_status"] == "passed"
+    assert first_review_failed["verification_note"] is None
+    assert first_review_failed["agents_checked_count"] == 1
+    assert first_review_failed["agents_updated"] is False
+    assert first_review_failed["finding_count"] == 1
+    assert first_review_passed["scope_confirmed"] is True
+    assert first_review_passed["verification_status"] == "passed"
+    assert first_review_passed["verification_note"] is None
+    assert first_review_passed["agents_checked_count"] == 1
+    assert first_review_passed["agents_updated"] is False
+    assert first_review_passed["finding_count"] == 0
 
 
 def test_workflow_state_emits_escalation_and_repeated_loop_metrics():
@@ -371,24 +438,21 @@ def test_workflow_state_emits_escalation_and_repeated_loop_metrics():
                 "set-step-status",
                 "step-1",
                 "fix_pending",
-                "--review-summary",
-                "Missing regression assertion.",
+                *_review_args(summary="Missing regression assertion.", finding_count=1),
             ),
             ("set-step-status", "step-1", "review_pending"),
             (
                 "set-step-status",
                 "step-1",
                 "fix_pending",
-                "--review-summary",
-                "Missing regression assertion again.",
+                *_review_args(summary="Missing regression assertion again.", finding_count=1),
             ),
             ("set-step-status", "step-1", "review_pending"),
             (
                 "set-step-status",
                 "step-1",
                 "commit_pending",
-                "--review-summary",
-                "review passed",
+                *_review_args(summary="review passed", finding_count=0),
             ),
             ("set-step-status", "step-1", "committed"),
             (
@@ -408,8 +472,7 @@ def test_workflow_state_emits_escalation_and_repeated_loop_metrics():
                 "set-step-status",
                 "step-1",
                 "commit_pending",
-                "--review-summary",
-                "gap fix review passed",
+                *_review_args(summary="gap fix review passed", finding_count=0),
             ),
             ("set-step-status", "step-1", "committed"),
             (
