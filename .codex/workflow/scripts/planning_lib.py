@@ -808,6 +808,13 @@ def render_planning_status(state: dict[str, Any]) -> str:
 
 def execution_status_summary(state: dict[str, Any]) -> str:
     step = next(step for step in state["steps"] if step["id"] == state["current_step_id"])
+    escalation = state.get("escalation")
+    escalation_lines = ""
+    if isinstance(escalation, dict):
+        escalation_lines = (
+            f"\nEscalation category: `{escalation['code']}`\n"
+            f"Escalation summary: {escalation['summary']}"
+        )
     return (
         f"Execution workflow: `{state['workflow_name']}`\n"
         f"Workflow status: `{state['workflow_status']}`\n"
@@ -816,6 +823,7 @@ def execution_status_summary(state: dict[str, Any]) -> str:
         f"Plan source: `{state['plan_path']}`\n"
         f"UAT artifact: `{state['uat_artifact_path']}`\n"
         f"Metrics dir: `{state['metrics_dir']}`"
+        f"{escalation_lines}"
     )
 
 

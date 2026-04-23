@@ -99,6 +99,7 @@ When using non-default workflow files, pass the matching `--planning-state-path`
   - `python3 .codex/workflow/scripts/planning_state.py compare-plan`
 - Execution state CLI:
   - `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> <status>`
+  - `python3 .codex/workflow/scripts/workflow_state.py resolve-escalation`
   - `python3 .codex/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`
   - `python3 .codex/workflow/scripts/workflow_state.py set-workflow-status complete`
   - `python3 .codex/workflow/scripts/workflow_state.py set-workflow-status <status> --override-reason "..."`
@@ -108,16 +109,18 @@ When using non-default workflow files, pass the matching `--planning-state-path`
 Execution now ends with a blocking post-code control loop:
 
 1. Development owns implementation through `committed` for each step
-2. Review remains embedded in execution and blocks promotion to commit
-3. `uat_pending` after the last committed step
-4. `gap_closure_pending` for fixable UAT gaps inside the same workflow
-5. `replan_required` when UAT shows a scope or architecture mismatch
-6. `ship_pending` only after UAT passes
-7. Deployment is intentionally limited to branch push, PR creation, optional `@codex review`, and workflow completion
+2. `set-step-status ... review_pending` runs deterministic pre-review sensors before inferential review
+3. `execution_escalated` blocks the workflow when deterministic sensors fail or execution state becomes ambiguous
+4. Review remains embedded in execution and blocks promotion to commit
+5. `uat_pending` after the last committed step
+6. `gap_closure_pending` for fixable UAT gaps inside the same workflow
+7. `replan_required` when UAT shows a scope or architecture mismatch
+8. `ship_pending` only after UAT passes
+9. Deployment is intentionally limited to branch push, PR creation, optional `@codex review`, and workflow completion
 
-Manual workflow-status jumps are override-only operations. `set-workflow-status complete` is reserved for the real ship path after the current step is already `shipped`.
+Clear normal execution escalations with `python3 .codex/workflow/scripts/workflow_state.py resolve-escalation` after the blocker is fixed. Manual workflow-status jumps are still override-only operations. `set-workflow-status complete` is reserved for the real ship path after the current step is already `shipped`.
 
-Telemetry stays local and auditable under `.codex/workflow/metrics/`.
+Telemetry stays local and auditable under `.codex/workflow/metrics/`, including escalation categories and repeated review/UAT loop counts in the scorecard.
 
 ## Installation
 
@@ -163,6 +166,7 @@ This repo works as a Codex plugin. The simplest local install path is to keep it
 - Run focused telemetry tests: `uv run pytest tests/scripts/test_telemetry_contract.py`
 - Inspect workflow status: `python3 .codex/workflow/scripts/workflow_router.py status`
 - Start greenfield bootstrap planning: `python3 .codex/workflow/scripts/workflow_router.py bootstrap-start "..."`
+- Clear an execution escalation after fixing the blocker: `python3 .codex/workflow/scripts/workflow_state.py resolve-escalation`
 - Record a UAT outcome: `python3 .codex/workflow/scripts/workflow_state.py set-uat-status passed --summary "..."`
 - Compare baseline vs candidate plan quality: `python3 .codex/workflow/scripts/planning_state.py compare-plan`
 - Validate the plugin manifest JSON: `python3 -m json.tool .codex-plugin/plugin.json`

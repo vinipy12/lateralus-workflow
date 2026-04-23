@@ -314,6 +314,7 @@ def resume_workflow(
         next_state, decision, _ = next_stop_decision(next_state)
     if changed:
         save_state(next_state, execution_state_path)
+        _emit_execution_transition_metrics(next_state, previous_status=previous_status)
 
     if decision.action == "noop":
         return WorkflowRouteResponse(
@@ -323,6 +324,18 @@ def resume_workflow(
             additional_context=(
                 "Treat the user's prompt as a workflow status request and report only the current state.\n\n"
                 f"{execution_status_summary(next_state)}"
+            ),
+        )
+
+    if next_state["workflow_status"] == "execution_escalated" or decision.action == "escalate":
+        return WorkflowRouteResponse(
+            status="ok",
+            mode="execution",
+            message="workflow execution escalated",
+            additional_context=(
+                "Treat the user's prompt as a workflow resume request. The workflow is explicitly escalated and "
+                "cannot continue until the blocker is resolved.\n\n"
+                f"{decision.prompt}"
             ),
         )
 
@@ -535,3 +548,39 @@ def _relative_or_source(path: Path) -> str:
         return str(path.relative_to(Path.cwd()))
     except ValueError:
         return str(path)
+
+
+def _emit_execution_transition_metrics(state: dict, *, previous_status: str) -> None:
+    if previous_status == state["workflow_status"]:
+        return
+    if state["workflow_status"] != "execution_escalated":
+        return
+    escalation = state.get("escalation")
+    if not isinstance(escalation, dict):
+        return
+    if isinstance(escalation.get("details"), list):
+        append_metrics_event(
+            state["metrics_dir"],
+            "deterministic_sensor_failed",
+            details={
+                "workflow_name": state["workflow_name"],
+                "step_id": state["current_step_id"],
+                "category": escalation["code"],
+                "summary": escalation["summary"],
+                "failure_count": len(escalation["details"]),
+                "source": "resume_workflow",
+            },
+        )
+    append_metrics_event(
+        state["metrics_dir"],
+        "execution_escalation_entered",
+        details={
+            "workflow_name": state["workflow_name"],
+            "current_step_id": state["current_step_id"],
+            "previous_status": previous_status,
+            "workflow_status": state["workflow_status"],
+            "category": escalation["code"],
+            "summary": escalation["summary"],
+            "occurrence_count": escalation["occurrence_count"],
+        },
+    )

@@ -2,6 +2,7 @@
   "version": 1,
   "workflow_name": "example feature rollout",
   "workflow_status": "active",
+  "escalation": null,
   "mode": "ship",
   "plan_path": "PLANS.md",
   "review_path": "code_review.md",

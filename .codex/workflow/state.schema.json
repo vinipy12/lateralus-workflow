@@ -7,6 +7,7 @@
     "version",
     "workflow_name",
     "workflow_status",
+    "escalation",
     "mode",
     "plan_path",
     "review_path",
@@ -31,12 +32,73 @@
       "type": "string",
       "enum": [
         "active",
+        "execution_escalated",
         "uat_pending",
         "gap_closure_pending",
         "replan_required",
         "ship_pending",
         "complete"
       ]
+    },
+    "escalation": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "summary",
+        "blocking_step_id",
+        "first_triggered_at",
+        "last_triggered_at",
+        "occurrence_count"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "verification_missing",
+            "verification_failed",
+            "ownership_mismatch",
+            "agents_update_required",
+            "review_required",
+            "uat_replan_required",
+            "manual_override",
+            "unknown_blocker"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "blocking_step_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "details": {
+          "type": [
+            "object",
+            "array",
+            "null"
+          ]
+        },
+        "first_triggered_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "last_triggered_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "occurrence_count": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
     },
     "mode": {
       "type": "string",

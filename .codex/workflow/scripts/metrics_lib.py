@@ -71,6 +71,8 @@ def build_scorecard(events: list[dict[str, Any]]) -> dict[str, Any]:
     queue: list[dict[str, Any]] = []
     time_to_green_samples: list[float] = []
     time_to_ship_samples: list[float] = []
+    escalation_samples: list[int] = []
+    escalation_categories = Counter()
     latest_timestamp: str | None = None
 
     for entry in events:
@@ -89,12 +91,21 @@ def build_scorecard(events: list[dict[str, Any]]) -> dict[str, Any]:
             # the older session was abandoned or canceled without a closing event.
             if queue:
                 queue.clear()
-            queue.append({"started_at": timestamp, "green_recorded": False})
+            queue.append({"started_at": timestamp, "green_recorded": False, "escalation_count": 0})
+            continue
+
+        if event == "execution_escalation_entered":
+            category = str(entry.get("category") or "").strip()
+            if category:
+                escalation_categories[category] += 1
+            if queue:
+                queue[0]["escalation_count"] += 1
             continue
 
         if event in {"uat_failed_replan", "workflow_canceled"}:
             if queue:
-                queue.pop(0)
+                session = queue.pop(0)
+                escalation_samples.append(session["escalation_count"])
             continue
 
         if event == "uat_passed":
@@ -110,6 +121,7 @@ def build_scorecard(events: list[dict[str, Any]]) -> dict[str, Any]:
         if event == "workflow_shipped":
             if queue:
                 session = queue.pop(0)
+                escalation_samples.append(session["escalation_count"])
                 time_to_ship_samples.append(
                     (timestamp - session["started_at"]).total_seconds()
                 )
@@ -123,6 +135,8 @@ def build_scorecard(events: list[dict[str, Any]]) -> dict[str, Any]:
     uat_failures = counts["uat_failed_gap"] + counts["uat_failed_replan"]
     uat_passes = counts["uat_passed"]
     total_gate_reviews = review_failures + review_passes
+    if queue:
+        escalation_samples.append(queue[0]["escalation_count"])
 
     return {
         "version": 1,
@@ -137,6 +151,11 @@ def build_scorecard(events: list[dict[str, Any]]) -> dict[str, Any]:
         "time_to_green": _duration_summary(time_to_green_samples),
         "time_to_ship": _duration_summary(time_to_ship_samples),
         "human_override_frequency": _safe_ratio(counts["override_used"], len(events)),
+        "deterministic_sensor_failure_count": counts["deterministic_sensor_failed"],
+        "repeated_review_failure_count": counts["review_failed_repeated"],
+        "repeated_uat_gap_count": counts["uat_gap_repeated"],
+        "escalation_counts_by_category": dict(sorted(escalation_categories.items())),
+        "escalation_frequency": _count_summary(escalation_samples),
     }
 
 
@@ -161,6 +180,27 @@ def _duration_summary(samples: list[float]) -> dict[str, Any]:
         "latest_seconds": rounded[-1],
         "minimum_seconds": min(rounded),
         "maximum_seconds": max(rounded),
+    }
+
+
+def _count_summary(samples: list[int]) -> dict[str, Any]:
+    if not samples:
+        return {
+            "sample_count": 0,
+            "total": 0,
+            "average_per_workflow": None,
+            "latest_per_workflow": None,
+            "minimum_per_workflow": None,
+            "maximum_per_workflow": None,
+        }
+
+    return {
+        "sample_count": len(samples),
+        "total": sum(samples),
+        "average_per_workflow": round(sum(samples) / len(samples), 2),
+        "latest_per_workflow": samples[-1],
+        "minimum_per_workflow": min(samples),
+        "maximum_per_workflow": max(samples),
     }
 
 

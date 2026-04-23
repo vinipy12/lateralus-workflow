@@ -58,12 +58,14 @@ For an active execution workflow:
 1. Run `resume` to load the exact next instruction for the current step.
 2. Keep the phase boundary explicit:
    - Development ends only when the current step reaches `committed`.
+   - `set-step-status ... review_pending` runs deterministic pre-review sensors before inferential review.
    - Review is a hard gate before commit; do not bypass it.
    - Deployment begins only after UAT moves the workflow to `ship_pending`.
 3. Use `python3 .agents/skills/workflow/scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
-4. Record UAT outcomes with `python3 .agents/skills/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`.
-5. Treat `set-workflow-status complete` as the final ship-only transition. Other manual workflow-status edits require `--override-reason`.
-6. When the workflow reaches `ship_pending`, use `$ship`.
+4. If execution enters `execution_escalated`, fix the blocker and clear it with `python3 .agents/skills/workflow/scripts/workflow_state.py resolve-escalation` before resuming normal execution.
+5. Record UAT outcomes with `python3 .agents/skills/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`.
+6. Treat `set-workflow-status complete` as the final ship-only transition. Other manual workflow-status edits require `--override-reason`.
+7. When the workflow reaches `ship_pending`, use `$ship`.
 
 For direct activation from an approved plan artifact:
 

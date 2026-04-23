@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ DEFAULT_BASE_BRANCH = "origin/main"
 
 VALID_WORKFLOW_STATUSES = {
     "active",
+    "execution_escalated",
     "uat_pending",
     "gap_closure_pending",
     "replan_required",
@@ -46,6 +48,17 @@ VALID_STEP_STATUSES = {
     "shipped",
 }
 VALID_UAT_STATUSES = {"pending", "passed", "failed_gap", "failed_replan"}
+VALID_ESCALATION_CODES = {
+    "verification_missing",
+    "verification_failed",
+    "ownership_mismatch",
+    "agents_update_required",
+    "review_required",
+    "uat_replan_required",
+    "manual_override",
+    "unknown_blocker",
+}
+REVIEW_PENDING_ENTRY_STATUSES = {"implementing", "fix_pending", "review_pending"}
 
 
 @dataclass(frozen=True)
@@ -74,6 +87,7 @@ def validate_state(state: dict[str, Any]) -> None:
         "version",
         "workflow_name",
         "workflow_status",
+        "escalation",
         "mode",
         "plan_path",
         "review_path",
@@ -93,6 +107,11 @@ def validate_state(state: dict[str, Any]) -> None:
         raise ValueError("workflow state version must be 1")
     if state["workflow_status"] not in VALID_WORKFLOW_STATUSES:
         raise ValueError(f"invalid workflow_status: {state['workflow_status']}")
+    _validate_escalation(state["escalation"])
+    if state["workflow_status"] == "execution_escalated" and state["escalation"] is None:
+        raise ValueError("execution_escalated workflow_status requires escalation metadata")
+    if state["workflow_status"] != "execution_escalated" and state["escalation"] is not None:
+        raise ValueError("escalation metadata must be null unless workflow_status is execution_escalated")
     if state["mode"] not in VALID_MODES:
         raise ValueError(f"invalid mode: {state['mode']}")
     if not isinstance(state["request_codex_review"], bool):
@@ -172,6 +191,7 @@ def build_state_from_plan_spec(
         "version": 1,
         "workflow_name": workflow_name,
         "workflow_status": "active",
+        "escalation": None,
         "mode": workflow_mode,
         "plan_path": plan_spec.get("plan_path", plan_path),
         "review_path": plan_spec.get("review_path", review_path),
@@ -857,6 +877,7 @@ def _normalize_state_compat(state: Any, path: Path) -> dict[str, Any]:
     state_root = path.resolve().parent
     normalized.setdefault("uat_artifact_path", str(state_root / "uat.json"))
     normalized.setdefault("metrics_dir", str(state_root / "metrics"))
+    normalized.setdefault("escalation", None)
     return normalized
 
 
@@ -893,6 +914,242 @@ def step_index(state: dict[str, Any], step_id: str) -> int:
     raise ValueError(f"step not found: {step_id}")
 
 
+def evaluate_pre_review_sensors(
+    state: dict[str, Any],
+    *,
+    step: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    validate_state(state)
+    step = step or current_step(state)
+    verification_targets = list(step.get("verification_targets", []))
+    failures: list[dict[str, Any]] = []
+
+    if step["id"] != state["current_step_id"]:
+        failures.append(
+            _build_sensor_failure(
+                code="review_required",
+                step=step,
+                summary=(
+                    f"only the current step `{state['current_step_id']}` can advance to review_pending; "
+                    f"got `{step['id']}`"
+                ),
+                sensor="current_step",
+                details={
+                    "current_step_id": state["current_step_id"],
+                    "requested_step_id": step["id"],
+                },
+            )
+        )
+
+    if step["status"] not in REVIEW_PENDING_ENTRY_STATUSES:
+        failures.append(
+            _build_sensor_failure(
+                code="review_required",
+                step=step,
+                summary=(
+                    f"step `{step['id']}` cannot move to review_pending from `{step['status']}`; "
+                    "expected implementing or fix_pending"
+                ),
+                sensor="status_path",
+                details={
+                    "current_status": step["status"],
+                    "allowed_statuses": sorted(REVIEW_PENDING_ENTRY_STATUSES - {"review_pending"}),
+                },
+            )
+        )
+
+    if not step["verify_cmds"]:
+        failures.append(
+            _build_sensor_failure(
+                code="verification_missing",
+                step=step,
+                summary="current step has no verification commands configured before review",
+                sensor="verify_cmds",
+                details={
+                    "done_when": list(step["done_when"]),
+                    "verification_targets": verification_targets,
+                },
+            )
+        )
+    else:
+        command_targets = _extract_verify_targets(step["verify_cmds"])
+        missing_targets = [
+            target
+            for target in verification_targets
+            if not _path_is_covered_by_any(target, command_targets)
+        ]
+        if missing_targets:
+            failures.append(
+                _build_sensor_failure(
+                    code="verification_missing",
+                    step=step,
+                    summary=(
+                        "verification commands do not structurally cover every configured verification target"
+                    ),
+                    sensor="verification_targets",
+                    details={
+                        "verification_targets": verification_targets,
+                        "command_targets": command_targets,
+                        "missing_targets": missing_targets,
+                        "done_when": list(step["done_when"]),
+                    },
+                )
+            )
+
+    ownership_paths = list(step.get("file_ownership", []))
+    if ownership_paths and verification_targets:
+        uncovered_targets = [
+            target
+            for target in verification_targets
+            if not _path_is_covered_by_any(target, ownership_paths)
+        ]
+        if uncovered_targets:
+            failures.append(
+                _build_sensor_failure(
+                    code="ownership_mismatch",
+                    step=step,
+                    summary="verification targets fall outside the current step file ownership",
+                    sensor="file_ownership",
+                    details={
+                        "file_ownership": ownership_paths,
+                        "verification_targets": verification_targets,
+                        "uncovered_targets": uncovered_targets,
+                    },
+                )
+            )
+
+    required_agents_paths = infer_agents_paths(
+        list(step["context"]) + verification_targets + ownership_paths
+    )
+    missing_agents_paths = [
+        path for path in required_agents_paths if path not in step["agents_paths"]
+    ]
+    if missing_agents_paths:
+        failures.append(
+            _build_sensor_failure(
+                code="agents_update_required",
+                step=step,
+                summary="configured AGENTS.md checks do not cover every relevant durable-guidance scope",
+                sensor="agents_paths",
+                details={
+                    "configured_agents_paths": list(step["agents_paths"]),
+                    "required_agents_paths": required_agents_paths,
+                    "missing_agents_paths": missing_agents_paths,
+                },
+            )
+        )
+
+    return {
+        "ok": not failures,
+        "step_id": step["id"],
+        "failures": failures,
+    }
+
+
+def find_execution_blocker(
+    state: dict[str, Any],
+    *,
+    include_active_escalation: bool = True,
+) -> dict[str, Any] | None:
+    validate_state(state)
+    if include_active_escalation and state["workflow_status"] == "execution_escalated":
+        escalation = state["escalation"]
+        if escalation is None:  # pragma: no cover - validate_state prevents this
+            return None
+        return dict(escalation)
+
+    step = current_step(state)
+    active_escalation = state.get("escalation")
+    if (
+        state["workflow_status"] == "execution_escalated"
+        and not include_active_escalation
+        and isinstance(active_escalation, dict)
+        and active_escalation.get("code")
+        in {
+            "verification_missing",
+            "verification_failed",
+            "ownership_mismatch",
+            "agents_update_required",
+            "review_required",
+        }
+    ):
+        sensor_result = evaluate_pre_review_sensors(state, step=step)
+        if not sensor_result["ok"]:
+            primary = dict(sensor_result["failures"][0])
+            primary["details"] = sensor_result["failures"]
+            return primary
+
+    if step["status"] == "review_pending":
+        sensor_result = evaluate_pre_review_sensors(state, step=step)
+        if not sensor_result["ok"]:
+            primary = dict(sensor_result["failures"][0])
+            primary["details"] = sensor_result["failures"]
+            return primary
+
+    if step["status"] == "shipped" and state["workflow_status"] != "ship_pending":
+        return {
+            "code": "manual_override",
+            "summary": (
+                "workflow state is inconsistent after ship and requires explicit reconciliation before continuing"
+            ),
+            "blocking_step_id": step["id"],
+            "details": {
+                "workflow_status": state["workflow_status"],
+                "step_status": step["status"],
+            },
+        }
+
+    return None
+
+
+def enter_execution_escalation(
+    state: dict[str, Any],
+    blocker: dict[str, Any],
+    *,
+    timestamp: str | None = None,
+) -> tuple[dict[str, Any], bool]:
+    validate_state(state)
+    if blocker.get("code") not in VALID_ESCALATION_CODES:
+        raise ValueError(f"invalid escalation code: {blocker.get('code')}")
+
+    now = timestamp or _utc_now_iso()
+    existing = state.get("escalation")
+    same_active_escalation = (
+        state["workflow_status"] == "execution_escalated"
+        and isinstance(existing, dict)
+        and existing.get("code") == blocker.get("code")
+        and existing.get("blocking_step_id") == blocker.get("blocking_step_id")
+    )
+    escalation = {
+        "code": blocker["code"],
+        "summary": str(blocker["summary"]),
+        "blocking_step_id": blocker.get("blocking_step_id"),
+        "details": blocker.get("details"),
+        "first_triggered_at": existing["first_triggered_at"] if same_active_escalation else now,
+        "last_triggered_at": now,
+        "occurrence_count": (existing["occurrence_count"] + 1) if same_active_escalation else 1,
+    }
+    changed = state["workflow_status"] != "execution_escalated" or state.get("escalation") != escalation
+    state["workflow_status"] = "execution_escalated"
+    state["escalation"] = escalation
+    return state, changed
+
+
+def clear_execution_escalation(
+    state: dict[str, Any],
+    *,
+    next_status: str = "active",
+) -> tuple[dict[str, Any], dict[str, Any] | None, bool]:
+    validate_state(state)
+    if next_status == "execution_escalated":
+        raise ValueError("next_status must clear execution escalation")
+    previous = state.get("escalation")
+    changed = state["workflow_status"] == "execution_escalated" or previous is not None
+    state["workflow_status"] = next_status
+    state["escalation"] = None
+    return state, previous, changed
+
+
 def next_stop_decision(state: dict[str, Any]) -> tuple[dict[str, Any], WorkflowDecision, bool]:
     validate_state(state)
 
@@ -900,6 +1157,9 @@ def next_stop_decision(state: dict[str, Any]) -> tuple[dict[str, Any], WorkflowD
         return state, WorkflowDecision(action="noop"), False
 
     step = current_step(state)
+
+    if state["workflow_status"] == "execution_escalated":
+        return state, WorkflowDecision(action="escalate", prompt=_execution_escalation_prompt(state, step)), False
 
     if state["workflow_status"] == "replan_required":
         return state, WorkflowDecision(action="block", prompt=_replan_required_prompt(state, step)), False
@@ -909,8 +1169,11 @@ def next_stop_decision(state: dict[str, Any]) -> tuple[dict[str, Any], WorkflowD
             return state, WorkflowDecision(action="block", prompt=_ship_completion_prompt(state, step)), False
         return state, WorkflowDecision(action="block", prompt=_ship_prompt(state, step)), False
 
-    if step["status"] == "shipped":
-        return state, WorkflowDecision(action="block", prompt=_shipped_state_reconciliation_prompt(state, step)), False
+    blocker = find_execution_blocker(state, include_active_escalation=False)
+    if blocker is not None:
+        state, changed = enter_execution_escalation(state, blocker)
+        step = current_step(state)
+        return state, WorkflowDecision(action="escalate", prompt=_execution_escalation_prompt(state, step)), changed
 
     if state["workflow_status"] == "uat_pending":
         return state, WorkflowDecision(action="block", prompt=_uat_prompt(state, step)), False
@@ -1137,6 +1400,27 @@ def _replan_required_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
     )
 
 
+def _execution_escalation_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
+    escalation = state["escalation"] or {}
+    details_lines = _escalation_details_lines(escalation.get("details"))
+    return (
+        "This workflow is escalated and cannot safely continue.\n\n"
+        f"Workflow: `{state['workflow_name']}`\n"
+        f"Workflow status: `{state['workflow_status']}`\n"
+        f"Current step: `{step['id']}` - {step['title']}\n"
+        f"Current step status: `{step['status']}`\n"
+        f"Escalation category: `{escalation.get('code', 'unknown_blocker')}`\n"
+        f"Reason: {escalation.get('summary', 'no summary recorded')}\n"
+        f"First triggered: `{escalation.get('first_triggered_at', 'unknown')}`\n"
+        f"Last triggered: `{escalation.get('last_triggered_at', 'unknown')}`\n"
+        f"Occurrence count: `{escalation.get('occurrence_count', 0)}`\n\n"
+        f"Details:\n{details_lines}\n\n"
+        "Fix the blocking condition before continuing.\n"
+        f"When the blocker is cleared, run `{STATE_TOOL_COMMAND} resolve-escalation` to return the workflow to "
+        "active execution, then resume or run the next normal state transition."
+    )
+
+
 def _ship_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
     review_flag = "true" if state["request_codex_review"] else "false"
     return (
@@ -1206,6 +1490,99 @@ def _unique_preserving_order(values: list[str]) -> list[str]:
             seen.add(value)
             ordered.append(value)
     return ordered
+
+
+def _validate_escalation(escalation: Any) -> None:
+    if escalation is None:
+        return
+    if not isinstance(escalation, dict):
+        raise ValueError("escalation must be an object or null")
+    required_fields = {
+        "code",
+        "summary",
+        "blocking_step_id",
+        "first_triggered_at",
+        "last_triggered_at",
+        "occurrence_count",
+    }
+    missing = sorted(required_fields - escalation.keys())
+    if missing:
+        raise ValueError(f"escalation missing required fields: {', '.join(missing)}")
+    code = escalation["code"]
+    if code not in VALID_ESCALATION_CODES:
+        raise ValueError(f"invalid escalation code: {code}")
+    summary = escalation["summary"]
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("escalation.summary must be a non-empty string")
+    blocking_step_id = escalation["blocking_step_id"]
+    if blocking_step_id is not None and (
+        not isinstance(blocking_step_id, str) or not blocking_step_id.strip()
+    ):
+        raise ValueError("escalation.blocking_step_id must be a non-empty string or null")
+    details = escalation.get("details")
+    if details is not None and not isinstance(details, (dict, list)):
+        raise ValueError("escalation.details must be an object, array, or null")
+    for field_name in ("first_triggered_at", "last_triggered_at"):
+        value = escalation[field_name]
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"escalation.{field_name} must be a non-empty string")
+    occurrence_count = escalation["occurrence_count"]
+    if not isinstance(occurrence_count, int) or occurrence_count <= 0:
+        raise ValueError("escalation.occurrence_count must be a positive integer")
+
+
+def _build_sensor_failure(
+    *,
+    code: str,
+    step: dict[str, Any],
+    summary: str,
+    sensor: str,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if code not in VALID_ESCALATION_CODES:
+        raise ValueError(f"invalid escalation code: {code}")
+    return {
+        "code": code,
+        "summary": summary,
+        "blocking_step_id": step["id"],
+        "details": {"sensor": sensor, **(details or {})},
+    }
+
+
+def _path_is_covered_by_any(path: str, candidates: list[str]) -> bool:
+    return any(_path_is_covered(path, candidate) for candidate in candidates)
+
+
+def _path_is_covered(path: str, candidate: str) -> bool:
+    normalized_path = path.strip().rstrip("/")
+    normalized_candidate = candidate.strip().rstrip("/")
+    return normalized_path == normalized_candidate or normalized_path.startswith(normalized_candidate + "/")
+
+
+def _escalation_details_lines(details: Any) -> str:
+    if details is None:
+        return "- none recorded"
+    if isinstance(details, list):
+        lines: list[str] = []
+        for item in details:
+            if isinstance(item, dict):
+                code = item.get("code", "unknown_blocker")
+                summary = item.get("summary", "unknown blocker")
+                sensor = ""
+                if isinstance(item.get("details"), dict) and item["details"].get("sensor"):
+                    sensor = f" ({item['details']['sensor']})"
+                lines.append(f"- `{code}`{sensor}: {summary}")
+            else:
+                lines.append(f"- {item}")
+        return "\n".join(lines) if lines else "- none recorded"
+    if isinstance(details, dict):
+        lines = [f"- {key}: {value}" for key, value in sorted(details.items())]
+        return "\n".join(lines) if lines else "- none recorded"
+    return f"- {details}"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _bullets(items: list[str]) -> str:

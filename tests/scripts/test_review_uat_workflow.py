@@ -15,6 +15,7 @@ from workflow_test_support import (  # noqa: E402
     STATE_EXAMPLE_PATH,
     example_plan,
     load_workflow_lib,
+    load_workflow_router_lib,
     rebase_execution_state_paths,
     run_workflow_state_command,
     save_example_uat_artifact,
@@ -40,6 +41,30 @@ def test_review_pending_step_blocks_for_review_gate():
     assert "code_review.md" in decision.prompt
     assert "python3 .codex/workflow/scripts/workflow_state.py set-step-status step-1 commit_pending" in decision.prompt
     assert "set-step-status step-1 commit_pending" in decision.prompt
+
+
+def test_workflow_state_review_pending_requires_pre_review_sensors():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["steps"][0]["verify_cmds"] = []
+        workflow_lib.save_state(state, state_path)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "review_pending",
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode != 0
+    assert "deterministic pre-review sensors" in result.stderr
+    assert persisted_state["workflow_status"] == "execution_escalated"
+    assert persisted_state["steps"][0]["status"] == "implementing"
+    assert persisted_state["escalation"]["code"] == "verification_missing"
 
 
 def test_final_committed_step_enters_uat_pending_mode():
@@ -117,8 +142,15 @@ def test_workflow_state_set_step_status_review_transitions_persist_state():
     with tempfile.TemporaryDirectory() as tmpdir:
         state_path = Path(tmpdir) / "state.json"
         state = _build_execution_state(workflow_lib, tmpdir)
-        state["steps"][0]["status"] = "review_pending"
         workflow_lib.save_state(state, state_path)
+
+        review_result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "review_pending",
+        )
+        state_after_review = workflow_lib.load_state(state_path)
 
         fix_result = run_workflow_state_command(
             state_path,
@@ -129,6 +161,14 @@ def test_workflow_state_set_step_status_review_transitions_persist_state():
             "Missing regression assertion.",
         )
         state_after_fix = workflow_lib.load_state(state_path)
+
+        rereview_result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "review_pending",
+        )
+        state_after_rereview = workflow_lib.load_state(state_path)
 
         pass_result = run_workflow_state_command(
             state_path,
@@ -148,14 +188,83 @@ def test_workflow_state_set_step_status_review_transitions_persist_state():
         )
         persisted_state = workflow_lib.load_state(state_path)
 
+    assert review_result.returncode == 0, review_result.stderr
+    assert state_after_review["steps"][0]["status"] == "review_pending"
     assert fix_result.returncode == 0, fix_result.stderr
     assert state_after_fix["steps"][0]["status"] == "fix_pending"
     assert state_after_fix["steps"][0]["review_summary"] == "Missing regression assertion."
+    assert rereview_result.returncode == 0, rereview_result.stderr
+    assert state_after_rereview["steps"][0]["status"] == "review_pending"
     assert pass_result.returncode == 0, pass_result.stderr
     assert state_after_pass["steps"][0]["status"] == "commit_pending"
     assert state_after_pass["steps"][0]["review_summary"] == "review passed"
     assert commit_result.returncode == 0, commit_result.stderr
     assert persisted_state["steps"][0]["status"] == "committed"
+
+
+def test_resume_surfaces_execution_escalation_for_invalid_review_state():
+    workflow_lib = load_workflow_lib()
+    workflow_router = load_workflow_router_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        planning_state_path = Path(tmpdir) / "planning_state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["steps"][0]["status"] = "review_pending"
+        state["steps"][0]["verify_cmds"] = []
+        workflow_lib.save_state(state, state_path)
+
+        response = workflow_router.resume_workflow(
+            planning_state_path=planning_state_path,
+            execution_state_path=state_path,
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert response.status == "ok"
+    assert response.message == "workflow execution escalated"
+    assert "verification_missing" in response.additional_context
+    assert persisted_state["workflow_status"] == "execution_escalated"
+    assert persisted_state["steps"][0]["status"] == "review_pending"
+    assert persisted_state["escalation"]["code"] == "verification_missing"
+
+
+def test_resolve_escalation_returns_workflow_to_active_execution():
+    workflow_lib = load_workflow_lib()
+    workflow_router = load_workflow_router_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        planning_state_path = Path(tmpdir) / "planning_state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["steps"][0]["verify_cmds"] = []
+        workflow_lib.save_state(state, state_path)
+
+        failed_review = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "review_pending",
+        )
+        escalated_state = workflow_lib.load_state(state_path)
+        escalated_state["steps"][0]["verify_cmds"] = ["uv run pytest tests/ai/test_embedding_service.py"]
+        workflow_lib.save_state(escalated_state, state_path)
+
+        resolve_result = run_workflow_state_command(
+            state_path,
+            "resolve-escalation",
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+        response = workflow_router.resume_workflow(
+            planning_state_path=planning_state_path,
+            execution_state_path=state_path,
+        )
+
+    assert failed_review.returncode != 0
+    assert resolve_result.returncode == 0, resolve_result.stderr
+    assert persisted_state["workflow_status"] == "active"
+    assert persisted_state["escalation"] is None
+    assert "Start the next execution step." not in response.additional_context
+    assert "Do not stop yet." in response.additional_context
 
 
 def test_workflow_state_set_uat_status_passed_updates_state_and_artifact():
@@ -305,6 +414,19 @@ def test_workflow_state_set_workflow_status_complete_requires_ship_pending_and_s
     assert "current step to be shipped" in not_shipped.stderr
     assert persisted_state["workflow_status"] == "ship_pending"
     assert metrics_exists is False
+
+
+def test_next_stop_decision_escalates_shipped_state_inconsistency():
+    workflow_lib = load_workflow_lib()
+    state = workflow_lib.build_state_from_plan_spec(example_plan(), plan_path="PLANS.md")
+    state["steps"][0]["status"] = "shipped"
+
+    next_state, decision, changed = workflow_lib.next_stop_decision(state)
+
+    assert changed is True
+    assert decision.action == "escalate"
+    assert next_state["workflow_status"] == "execution_escalated"
+    assert next_state["escalation"]["code"] == "manual_override"
 
 
 def test_workflow_state_set_step_status_shipped_requires_ship_pending_and_committed():

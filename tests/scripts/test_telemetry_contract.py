@@ -145,6 +145,50 @@ def test_metrics_scorecard_aggregates_representative_event_sequence():
     assert scorecard["time_to_green"]["latest_seconds"] == 80.0
     assert scorecard["time_to_ship"]["latest_seconds"] == 100.0
     assert scorecard["human_override_frequency"] == round(1 / 11, 4)
+    assert scorecard["deterministic_sensor_failure_count"] == 0
+    assert scorecard["repeated_review_failure_count"] == 0
+    assert scorecard["repeated_uat_gap_count"] == 0
+    assert scorecard["escalation_counts_by_category"] == {}
+    assert scorecard["escalation_frequency"]["total"] == 0
+
+
+def test_metrics_scorecard_summarizes_escalations_and_repeated_loops():
+    metrics_lib = load_metrics_lib()
+
+    scorecard = metrics_lib.build_scorecard(
+        [
+            {"event": "planning_started", "timestamp": "2026-01-01T00:00:00Z"},
+            {"event": "planning_approved", "timestamp": "2026-01-01T00:00:05Z"},
+            {"event": "execution_activated", "timestamp": "2026-01-01T00:00:06Z"},
+            {
+                "event": "deterministic_sensor_failed",
+                "timestamp": "2026-01-01T00:00:10Z",
+                "category": "verification_missing",
+            },
+            {
+                "event": "execution_escalation_entered",
+                "timestamp": "2026-01-01T00:00:11Z",
+                "category": "verification_missing",
+            },
+            {
+                "event": "execution_escalation_cleared",
+                "timestamp": "2026-01-01T00:00:20Z",
+                "category": "verification_missing",
+            },
+            {"event": "review_failed", "timestamp": "2026-01-01T00:00:30Z"},
+            {"event": "review_failed_repeated", "timestamp": "2026-01-01T00:00:40Z"},
+            {"event": "uat_failed_gap", "timestamp": "2026-01-01T00:00:50Z"},
+            {"event": "uat_gap_repeated", "timestamp": "2026-01-01T00:01:00Z"},
+            {"event": "workflow_shipped", "timestamp": "2026-01-01T00:01:20Z"},
+        ]
+    )
+
+    assert scorecard["deterministic_sensor_failure_count"] == 1
+    assert scorecard["repeated_review_failure_count"] == 1
+    assert scorecard["repeated_uat_gap_count"] == 1
+    assert scorecard["escalation_counts_by_category"] == {"verification_missing": 1}
+    assert scorecard["escalation_frequency"]["total"] == 1
+    assert scorecard["escalation_frequency"]["latest_per_workflow"] == 1
 
 
 def test_metrics_scorecard_drops_canceled_session_from_timing_queue():
@@ -199,9 +243,19 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
             (
                 "set-step-status",
                 "step-1",
+                "review_pending",
+            ),
+            (
+                "set-step-status",
+                "step-1",
                 "fix_pending",
                 "--review-summary",
                 "Missing regression assertion.",
+            ),
+            (
+                "set-step-status",
+                "step-1",
+                "review_pending",
             ),
             (
                 "set-step-status",
@@ -226,6 +280,18 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
                 "failed-gap",
                 "--summary",
                 "One fixable verification gap remains.",
+            ),
+            (
+                "set-step-status",
+                "step-1",
+                "review_pending",
+            ),
+            (
+                "set-step-status",
+                "step-1",
+                "commit_pending",
+                "--review-summary",
+                "gap fix review passed",
             ),
             (
                 "set-step-status",
@@ -264,14 +330,131 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
         "step_committed",
         "override_used",
         "uat_failed_gap",
+        "review_passed",
         "step_committed",
         "uat_passed",
         "workflow_shipped",
     ]
     assert scorecard["counts"]["review_failed"] == 1
-    assert scorecard["counts"]["review_passed"] == 1
+    assert scorecard["counts"]["review_passed"] == 2
     assert scorecard["counts"]["step_committed"] == 2
     assert scorecard["counts"]["override_used"] == 1
     assert scorecard["counts"]["uat_failed_gap"] == 1
     assert scorecard["counts"]["uat_passed"] == 1
     assert scorecard["counts"]["workflow_shipped"] == 1
+
+
+def test_workflow_state_emits_escalation_and_repeated_loop_metrics():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["steps"][0]["verify_cmds"] = []
+        workflow_lib.save_state(state, state_path)
+        save_example_uat_artifact(workflow_lib, state)
+
+        failed_review_gate = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "review_pending",
+        )
+        escalated_state = workflow_lib.load_state(state_path)
+        escalated_state["steps"][0]["verify_cmds"] = ["uv run pytest tests/ai/test_embedding_service.py"]
+        workflow_lib.save_state(escalated_state, state_path)
+
+        follow_up_commands = [
+            ("resolve-escalation",),
+            ("set-step-status", "step-1", "review_pending"),
+            (
+                "set-step-status",
+                "step-1",
+                "fix_pending",
+                "--review-summary",
+                "Missing regression assertion.",
+            ),
+            ("set-step-status", "step-1", "review_pending"),
+            (
+                "set-step-status",
+                "step-1",
+                "fix_pending",
+                "--review-summary",
+                "Missing regression assertion again.",
+            ),
+            ("set-step-status", "step-1", "review_pending"),
+            (
+                "set-step-status",
+                "step-1",
+                "commit_pending",
+                "--review-summary",
+                "review passed",
+            ),
+            ("set-step-status", "step-1", "committed"),
+            (
+                "set-workflow-status",
+                "uat_pending",
+                "--override-reason",
+                "manual workflow-status reconciliation",
+            ),
+            (
+                "set-uat-status",
+                "failed-gap",
+                "--summary",
+                "One fixable verification gap remains.",
+            ),
+            ("set-step-status", "step-1", "review_pending"),
+            (
+                "set-step-status",
+                "step-1",
+                "commit_pending",
+                "--review-summary",
+                "gap fix review passed",
+            ),
+            ("set-step-status", "step-1", "committed"),
+            (
+                "set-uat-status",
+                "failed-gap",
+                "--summary",
+                "Another small gap remains.",
+            ),
+        ]
+
+        for command in follow_up_commands:
+            result = run_workflow_state_command(state_path, *command)
+            assert result.returncode == 0, result.stderr
+
+        events_path = Path(state["metrics_dir"]) / "events.jsonl"
+        scorecard_path = Path(state["metrics_dir"]) / "scorecard.json"
+        events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line]
+        scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+
+    assert failed_review_gate.returncode != 0
+    assert [event["event"] for event in events] == [
+        "deterministic_sensor_failed",
+        "execution_escalation_entered",
+        "execution_escalation_cleared",
+        "review_failed",
+        "review_failed",
+        "review_failed_repeated",
+        "review_passed",
+        "step_committed",
+        "override_used",
+        "uat_failed_gap",
+        "review_passed",
+        "step_committed",
+        "uat_failed_gap",
+        "uat_gap_repeated",
+    ]
+    assert events[0]["category"] == "verification_missing"
+    assert events[1]["category"] == "verification_missing"
+    assert events[2]["category"] == "verification_missing"
+    assert scorecard["counts"]["deterministic_sensor_failed"] == 1
+    assert scorecard["counts"]["execution_escalation_entered"] == 1
+    assert scorecard["counts"]["execution_escalation_cleared"] == 1
+    assert scorecard["counts"]["review_failed_repeated"] == 1
+    assert scorecard["counts"]["uat_gap_repeated"] == 1
+    assert scorecard["deterministic_sensor_failure_count"] == 1
+    assert scorecard["repeated_review_failure_count"] == 1
+    assert scorecard["repeated_uat_gap_count"] == 1
+    assert scorecard["escalation_counts_by_category"] == {"verification_missing": 1}

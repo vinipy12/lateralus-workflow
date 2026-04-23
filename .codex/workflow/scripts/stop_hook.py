@@ -25,7 +25,7 @@ def main() -> int:
     if changed:
         save_state(state, DEFAULT_STATE_PATH)
 
-    if decision.action == "block" and decision.prompt:
+    if decision.action in {"block", "escalate"} and decision.prompt:
         print(json.dumps({"decision": "block", "reason": decision.prompt}))
     return 0
 

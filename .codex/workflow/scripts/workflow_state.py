@@ -6,12 +6,16 @@ import json
 import sys
 from pathlib import Path
 
-from metrics_lib import append_metrics_event
+from metrics_lib import append_metrics_event, load_metrics_events
 from workflow_lib import (
     DEFAULT_STATE_PATH,
     VALID_STEP_STATUSES,
     VALID_WORKFLOW_STATUSES,
+    clear_execution_escalation,
     current_step,
+    enter_execution_escalation,
+    evaluate_pre_review_sensors,
+    find_execution_blocker,
     load_state,
     save_state,
     update_uat_artifact_result,
@@ -50,6 +54,12 @@ def main() -> int:
     workflow_parser.add_argument("--override-reason", default=None)
     workflow_parser.add_argument("--path", type=Path, default=DEFAULT_STATE_PATH)
 
+    resolve_parser = subparsers.add_parser(
+        "resolve-escalation",
+        help="Clear the active execution escalation after the blocker is fixed.",
+    )
+    resolve_parser.add_argument("--path", type=Path, default=DEFAULT_STATE_PATH)
+
     uat_parser = subparsers.add_parser("set-uat-status", help="Record the current UAT result.")
     uat_parser.add_argument("status", choices=("passed", "failed-gap", "failed-replan"))
     uat_parser.add_argument("--summary", default=None)
@@ -76,7 +86,23 @@ def main() -> int:
 
     if args.command == "set-step-status":
         state = _require_state(args.path)
+        if state["workflow_status"] == "execution_escalated":
+            raise SystemExit(
+                "set-step-status is blocked while workflow_status is execution_escalated; "
+                "fix the blocker and run `resolve-escalation` first"
+            )
+        previous_status = state["workflow_status"]
         step = _find_step(state, args.step_id)
+        if args.status == "review_pending":
+            sensor_result = evaluate_pre_review_sensors(state, step=step)
+            if not sensor_result["ok"]:
+                blocker = dict(sensor_result["failures"][0])
+                blocker["details"] = sensor_result["failures"]
+                state, _ = enter_execution_escalation(state, blocker)
+                save_state(state, args.path)
+                _emit_deterministic_sensor_failure(state, step, sensor_result["failures"])
+                _emit_execution_escalation_entered(state, previous_status=previous_status)
+                raise SystemExit(_render_sensor_failure_message(sensor_result["failures"]))
         _validate_step_status_change(state, step, new_status=args.status)
         step["status"] = args.status
         if args.review_summary is not None:
@@ -100,8 +126,29 @@ def main() -> int:
         state = _require_state(args.path)
         override_reason = _normalize_override_reason(args.override_reason)
         step = current_step(state)
+        previous_status = state["workflow_status"]
         _validate_workflow_status_change(state, step, new_status=args.status, override_reason=override_reason)
-        state["workflow_status"] = args.status
+        if args.status == "execution_escalated":
+            state, _ = enter_execution_escalation(
+                state,
+                {
+                    "code": "manual_override",
+                    "summary": override_reason or "manual escalation requested",
+                    "blocking_step_id": step["id"],
+                    "details": {"command": "set-workflow-status", "target_status": args.status},
+                },
+            )
+        else:
+            if previous_status == "execution_escalated":
+                state, cleared_escalation, _ = clear_execution_escalation(state, next_status=args.status)
+                _emit_execution_escalation_cleared(
+                    state,
+                    previous_escalation=cleared_escalation,
+                    resolved_to_status=args.status,
+                )
+            else:
+                state["workflow_status"] = args.status
+                state["escalation"] = None
         save_state(state, args.path)
         if args.status == "complete":
             append_metrics_event(
@@ -113,6 +160,8 @@ def main() -> int:
                     "current_step_id": state["current_step_id"],
                 },
             )
+        if previous_status != "execution_escalated" and state["workflow_status"] == "execution_escalated":
+            _emit_execution_escalation_entered(state, previous_status=previous_status)
         _emit_override_if_needed(
             state,
             command="set-workflow-status",
@@ -122,9 +171,29 @@ def main() -> int:
         print(f"workflow_status -> {args.status}")
         return 0
 
+    if args.command == "resolve-escalation":
+        state = _require_state(args.path)
+        if state["workflow_status"] != "execution_escalated" or state.get("escalation") is None:
+            raise SystemExit("resolve-escalation requires workflow_status execution_escalated")
+        blocker = find_execution_blocker(state, include_active_escalation=False)
+        if blocker is not None:
+            raise SystemExit(
+                f"resolve-escalation blocked: {blocker['summary']}"
+            )
+        state, previous_escalation, _ = clear_execution_escalation(state, next_status="active")
+        save_state(state, args.path)
+        _emit_execution_escalation_cleared(
+            state,
+            previous_escalation=previous_escalation,
+            resolved_to_status="active",
+        )
+        print("execution escalation cleared")
+        return 0
+
     if args.command == "set-uat-status":
         state = _require_state(args.path)
         status = args.status.replace("-", "_")
+        repeated_uat_gap = False
         if state["workflow_status"] not in {"uat_pending", "gap_closure_pending"}:
             raise SystemExit(
                 f"set-uat-status requires workflow_status uat_pending or gap_closure_pending, got {state['workflow_status']}"
@@ -141,6 +210,7 @@ def main() -> int:
             state["workflow_status"] = "ship_pending"
             event_name = "uat_passed"
         elif status == "failed_gap":
+            repeated_uat_gap = _is_repeated_uat_gap_loop(state, step_id=step["id"])
             state["workflow_status"] = "gap_closure_pending"
             step["status"] = "implementing"
             if summary is not None:
@@ -162,6 +232,16 @@ def main() -> int:
                 "workflow_status": state["workflow_status"],
             },
         )
+        if status == "failed_gap" and repeated_uat_gap:
+            append_metrics_event(
+                state["metrics_dir"],
+                "uat_gap_repeated",
+                details={
+                    "workflow_name": state["workflow_name"],
+                    "current_step_id": step["id"],
+                    "category": "failed_gap",
+                },
+            )
         print(f"uat_status -> {args.status}")
         return 0
 
@@ -184,6 +264,14 @@ def _find_step(state: dict, step_id: str) -> dict:
 
 
 def _validate_step_status_change(state: dict, step: dict, *, new_status: str) -> None:
+    if new_status in {"fix_pending", "commit_pending"} and step["status"] != "review_pending":
+        raise SystemExit(
+            f"set-step-status {new_status} requires the current step to be review_pending, got {step['status']}"
+        )
+    if new_status == "committed" and step["status"] != "commit_pending":
+        raise SystemExit(
+            f"set-step-status committed requires the current step to be commit_pending, got {step['status']}"
+        )
     if new_status != "shipped":
         return
     if step["id"] != state["current_step_id"]:
@@ -208,6 +296,12 @@ def _validate_workflow_status_change(
     new_status: str,
     override_reason: str | None,
 ) -> None:
+    if new_status == "execution_escalated":
+        if override_reason is None:
+            raise SystemExit(
+                "set-workflow-status execution_escalated is a manual override; rerun with --override-reason \"<why>\""
+            )
+        return
     if new_status == "complete":
         if state["workflow_status"] != "ship_pending":
             raise SystemExit(
@@ -240,7 +334,18 @@ def _emit_step_metrics(state: dict, step: dict, *, status: str, review_summary: 
         "review_summary": review_summary or step.get("review_summary"),
     }
     if status == "fix_pending":
+        repeated_review_failure = _is_repeated_review_failure(state, step_id=step["id"])
         append_metrics_event(state["metrics_dir"], "review_failed", details=details)
+        if repeated_review_failure:
+            append_metrics_event(
+                state["metrics_dir"],
+                "review_failed_repeated",
+                details={
+                    "workflow_name": state["workflow_name"],
+                    "step_id": step["id"],
+                    "category": "review_failed",
+                },
+            )
     elif status == "commit_pending":
         append_metrics_event(state["metrics_dir"], "review_passed", details=details)
     elif status == "committed":
@@ -260,6 +365,112 @@ def _emit_override_if_needed(state: dict, *, command: str, reason: str | None, t
             "reason": reason.strip(),
         },
     )
+
+
+def _emit_deterministic_sensor_failure(state: dict, step: dict, failures: list[dict]) -> None:
+    primary = failures[0]
+    append_metrics_event(
+        state["metrics_dir"],
+        "deterministic_sensor_failed",
+        details={
+            "workflow_name": state["workflow_name"],
+            "step_id": step["id"],
+            "step_title": step["title"],
+            "category": primary["code"],
+            "summary": primary["summary"],
+            "failure_count": len(failures),
+        },
+    )
+
+
+def _emit_execution_escalation_entered(state: dict, *, previous_status: str) -> None:
+    escalation = state.get("escalation")
+    if not isinstance(escalation, dict):
+        return
+    append_metrics_event(
+        state["metrics_dir"],
+        "execution_escalation_entered",
+        details={
+            "workflow_name": state["workflow_name"],
+            "current_step_id": state["current_step_id"],
+            "previous_status": previous_status,
+            "workflow_status": state["workflow_status"],
+            "category": escalation["code"],
+            "summary": escalation["summary"],
+            "occurrence_count": escalation["occurrence_count"],
+        },
+    )
+
+
+def _emit_execution_escalation_cleared(
+    state: dict,
+    *,
+    previous_escalation: dict | None,
+    resolved_to_status: str,
+) -> None:
+    if not isinstance(previous_escalation, dict):
+        return
+    append_metrics_event(
+        state["metrics_dir"],
+        "execution_escalation_cleared",
+        details={
+            "workflow_name": state["workflow_name"],
+            "current_step_id": state["current_step_id"],
+            "resolved_to_status": resolved_to_status,
+            "category": previous_escalation["code"],
+            "summary": previous_escalation["summary"],
+            "occurrence_count": previous_escalation["occurrence_count"],
+        },
+    )
+
+
+def _render_sensor_failure_message(failures: list[dict]) -> str:
+    lines = ["set-step-status review_pending blocked by deterministic pre-review sensors:"]
+    for failure in failures:
+        lines.append(f"- [{failure['code']}] {failure['summary']}")
+    return "\n".join(lines)
+
+
+def _is_repeated_review_failure(state: dict, *, step_id: str) -> bool:
+    return _has_prior_unresolved_event(
+        state,
+        step_id=step_id,
+        target_event="review_failed",
+        reset_events={"review_passed", "step_committed", "workflow_canceled"},
+    )
+
+
+def _is_repeated_uat_gap_loop(state: dict, *, step_id: str) -> bool:
+    return _has_prior_unresolved_event(
+        state,
+        step_id=step_id,
+        target_event="uat_failed_gap",
+        reset_events={"uat_passed", "uat_failed_replan", "workflow_canceled", "workflow_shipped"},
+    )
+
+
+def _has_prior_unresolved_event(
+    state: dict,
+    *,
+    step_id: str,
+    target_event: str,
+    reset_events: set[str],
+) -> bool:
+    metrics_dir = state.get("metrics_dir")
+    if not isinstance(metrics_dir, str) or not metrics_dir.strip():
+        return False
+    events = load_metrics_events(metrics_dir)
+    for event in reversed(events):
+        event_name = str(event.get("event") or "").strip()
+        if not event_name:
+            continue
+        event_step_id = event.get("step_id", event.get("current_step_id"))
+        same_step = event_step_id == step_id
+        if event_name in reset_events and (event_step_id is None or same_step):
+            return False
+        if event_name == target_event and same_step:
+            return True
+    return False
 
 
 if __name__ == "__main__":
