@@ -2370,8 +2370,8 @@ def _direct_verification_targets_for_entry_points(
     targets: list[str] = []
     unmapped_entry_points: list[str] = []
     for entry_point in entry_points:
-        explicit_targets = matrix_by_entry_point.get(entry_point)
-        if explicit_targets:
+        if entry_point in matrix_by_entry_point:
+            explicit_targets = matrix_by_entry_point[entry_point]
             targets.extend(explicit_targets)
             continue
 

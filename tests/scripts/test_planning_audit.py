@@ -136,6 +136,41 @@ def test_direct_consumer_audit_flags_unmapped_consumers_without_matrix():
     assert any(entry_point in issue for issue in issues)
 
 
+def test_direct_consumer_audit_honors_explicit_empty_matrix_row_without_fallback():
+    planning_lib = _load_planning_lib()
+    entry_point = "app/integrations/nonstandard/reporting_adapter.py"
+    plan_spec = _compatibility_plan_for(
+        entry_point,
+        verify_cmds=["uv run pytest tests/e2e/test_reporting_flow.py"],
+    )
+    discovery = {
+        "version": 1,
+        "feature_request": "Preserve reporting consumer compatibility",
+        "current": {
+            "requirements": [],
+            "anti_goals": [],
+            "success_criteria": [],
+            "entry_points": [entry_point],
+            "blast_radius": [f"{entry_point} consumers depend on the current behavior contract."],
+            "pattern_anchors": [],
+            "verification_anchors": [],
+            "direct_verification_matrix": [
+                {
+                    "entry_point": entry_point,
+                    "verification_targets": [],
+                }
+            ],
+            "open_questions": [],
+            "complexity_events": [],
+        },
+        "supplements": [],
+    }
+
+    issues = planning_lib.audit_plan_against_discovery(plan_spec, discovery)
+
+    assert issues == []
+
+
 def test_direct_consumer_audit_rejects_matrix_without_entry_points():
     planning_lib = _load_planning_lib()
     entry_point = "app/integrations/reporting_adapter.py"

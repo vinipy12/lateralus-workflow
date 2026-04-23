@@ -173,6 +173,33 @@ def test_workflow_state_review_pending_accepts_dot_slash_prefixed_verification_p
     assert persisted_state["steps"][0]["status"] == "review_pending"
 
 
+def test_workflow_state_review_pending_rejects_malformed_verify_command_deterministically():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["steps"][0]["verify_cmds"] = ['uv run pytest "tests/ai/test_embedding_service.py']
+        state["steps"][0]["verification_targets"] = ["tests/ai/test_embedding_service.py"]
+        workflow_lib.save_state(state, state_path)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "review_pending",
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode != 0
+    assert "deterministic pre-review sensors" in result.stderr
+    assert "malformed shell quoting" in result.stderr
+    assert persisted_state["workflow_status"] == "execution_escalated"
+    assert persisted_state["steps"][0]["status"] == "implementing"
+    assert persisted_state["escalation"]["code"] == "verification_missing"
+    assert "invalid verify_cmd shell quoting" in persisted_state["escalation"]["details"][0]["details"]["error"]
+
+
 def test_final_committed_step_enters_uat_pending_mode():
     workflow_lib = load_workflow_lib()
     state = json.loads(STATE_EXAMPLE_PATH.read_text(encoding="utf-8"))

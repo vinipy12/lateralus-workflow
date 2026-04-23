@@ -1111,7 +1111,22 @@ def evaluate_pre_review_sensors(
             )
         )
     else:
-        command_targets = _extract_verify_targets(step["verify_cmds"])
+        try:
+            command_targets = _extract_verify_targets(step["verify_cmds"])
+        except ValueError as exc:
+            failures.append(
+                _build_sensor_failure(
+                    code="verification_missing",
+                    step=step,
+                    summary="verification commands contain malformed shell quoting and cannot be inspected before review",
+                    sensor="verify_cmds",
+                    details={
+                        "verify_cmds": list(step["verify_cmds"]),
+                        "error": str(exc),
+                    },
+                )
+            )
+            command_targets = []
         missing_targets = [
             target
             for target in verification_targets
@@ -1727,7 +1742,11 @@ def _shipped_state_reconciliation_prompt_with_details(
 def _extract_verify_targets(commands: list[str]) -> list[str]:
     targets: list[str] = []
     for command in commands:
-        for token in shlex.split(command):
+        try:
+            tokens = shlex.split(command)
+        except ValueError as exc:
+            raise ValueError(f"invalid verify_cmd shell quoting `{command}`: {exc}") from exc
+        for token in tokens:
             if token.startswith("-"):
                 continue
             if _looks_like_repo_path(token):
