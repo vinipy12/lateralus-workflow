@@ -4,7 +4,7 @@
 
 - Current development branch is `stage`.
 - `python3 .codex/workflow/scripts/workflow_router.py status` reports no active workflow state.
-- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `86` tests.
+- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `87` tests.
 - `execution-start` now honors custom `--planning-state-path` and `--execution-state-path` pairs, so custom-path workflows get the same planning/execution guardrails as the default path.
 - Planning audits now support `current.direct_verification_matrix`, and the repo no longer relies on placeholder consumer-path test files to prove direct-consumer coverage.
 - Focused regression coverage now includes `tests/scripts/test_workflow_router_cli.py`, `tests/scripts/test_planning_audit.py`, `tests/scripts/test_review_uat_workflow.py`, and `tests/scripts/test_telemetry_contract.py` alongside a slimmer `tests/scripts/test_codex_workflow.py`.

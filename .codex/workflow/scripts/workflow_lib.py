@@ -1554,9 +1554,18 @@ def _path_is_covered_by_any(path: str, candidates: list[str]) -> bool:
 
 
 def _path_is_covered(path: str, candidate: str) -> bool:
-    normalized_path = path.strip().rstrip("/")
-    normalized_candidate = candidate.strip().rstrip("/")
+    normalized_path = _normalize_coverage_path(path)
+    normalized_candidate = _normalize_coverage_path(candidate)
     return normalized_path == normalized_candidate or normalized_path.startswith(normalized_candidate + "/")
+
+
+def _normalize_coverage_path(value: str) -> str:
+    normalized = value.strip().rstrip("/")
+    if "::" in normalized:
+        node_path, _ = normalized.split("::", 1)
+        if node_path.strip():
+            normalized = node_path.strip().rstrip("/")
+    return normalized
 
 
 def _escalation_details_lines(details: Any) -> str:

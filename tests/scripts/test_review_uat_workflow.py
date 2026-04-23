@@ -67,6 +67,32 @@ def test_workflow_state_review_pending_requires_pre_review_sensors():
     assert persisted_state["escalation"]["code"] == "verification_missing"
 
 
+def test_workflow_state_review_pending_accepts_pytest_node_id_for_file_target():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["steps"][0]["verify_cmds"] = [
+            "uv run pytest tests/ai/test_embedding_service.py::test_updates_embedding_behavior"
+        ]
+        state["steps"][0]["verification_targets"] = ["tests/ai/test_embedding_service.py"]
+        workflow_lib.save_state(state, state_path)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "review_pending",
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["workflow_status"] == "active"
+    assert persisted_state["escalation"] is None
+    assert persisted_state["steps"][0]["status"] == "review_pending"
+
+
 def test_final_committed_step_enters_uat_pending_mode():
     workflow_lib = load_workflow_lib()
     state = json.loads(STATE_EXAMPLE_PATH.read_text(encoding="utf-8"))
