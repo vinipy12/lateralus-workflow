@@ -19,6 +19,7 @@ from planning_lib import (
     render_planning_status,
     save_planning_state,
 )
+from workflow_metrics import emit_execution_transition_metrics
 from workflow_lib import (
     DEFAULT_BASE_BRANCH,
     DEFAULT_REVIEW_PATH,
@@ -314,7 +315,11 @@ def resume_workflow(
         next_state, decision, _ = next_stop_decision(next_state)
     if changed:
         save_state(next_state, execution_state_path)
-        _emit_execution_transition_metrics(next_state, previous_status=previous_status)
+        emit_execution_transition_metrics(
+            next_state,
+            previous_status=previous_status,
+            source="resume_workflow",
+        )
 
     if decision.action == "noop":
         return WorkflowRouteResponse(
@@ -549,38 +554,3 @@ def _relative_or_source(path: Path) -> str:
     except ValueError:
         return str(path)
 
-
-def _emit_execution_transition_metrics(state: dict, *, previous_status: str) -> None:
-    if previous_status == state["workflow_status"]:
-        return
-    if state["workflow_status"] != "execution_escalated":
-        return
-    escalation = state.get("escalation")
-    if not isinstance(escalation, dict):
-        return
-    if isinstance(escalation.get("details"), list):
-        append_metrics_event(
-            state["metrics_dir"],
-            "deterministic_sensor_failed",
-            details={
-                "workflow_name": state["workflow_name"],
-                "step_id": state["current_step_id"],
-                "category": escalation["code"],
-                "summary": escalation["summary"],
-                "failure_count": len(escalation["details"]),
-                "source": "resume_workflow",
-            },
-        )
-    append_metrics_event(
-        state["metrics_dir"],
-        "execution_escalation_entered",
-        details={
-            "workflow_name": state["workflow_name"],
-            "current_step_id": state["current_step_id"],
-            "previous_status": previous_status,
-            "workflow_status": state["workflow_status"],
-            "category": escalation["code"],
-            "summary": escalation["summary"],
-            "occurrence_count": escalation["occurrence_count"],
-        },
-    )

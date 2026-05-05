@@ -272,6 +272,9 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          "agents_update_required": {
+            "type": "boolean"
           }
         }
       }

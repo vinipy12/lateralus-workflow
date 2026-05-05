@@ -29,7 +29,8 @@ Use the repo-local `.agents/skills/ship/scripts/workflow_state.py` wrapper when 
 5. Push the branch with local git.
 6. Prefer GitHub MCP to create the PR and to post a PR comment; fall back to `gh` only if MCP is unavailable.
 7. If `request_codex_review` is `true`, post `@codex review` to the PR after creation.
-8. Mark the workflow complete:
+8. Report that the PR is ready for the user to manually babysit review comments and coding-change suggestions.
+9. Mark the workflow complete:
    - Deployment scope here is branch push, PR creation, optional `@codex review`, and workflow completion only.
    - Update `STATE.md` if shipping changed release state, latest decisions, or unresolved risks.
    - `python3 .agents/skills/ship/scripts/workflow_state.py set-step-status <current-step-id> shipped`
@@ -46,6 +47,7 @@ Use the repo-local `.agents/skills/ship/scripts/workflow_state.py` wrapper when 
 - If push or PR creation fails, stop and report the exact blocker instead of guessing.
 - Do not use this skill before the workflow reaches `ship_pending`.
 - Do not ship if the workflow state still indicates an earlier step is uncommitted.
+- Do not continue into new kernel work after opening a PR for a PR-sized slice; hand the PR back to the user for manual babysitting.
 
 ## GitHub
 
@@ -61,3 +63,4 @@ Report:
 - PR title
 - PR URL
 - whether `@codex review` was requested
+- that the PR is ready for manual user babysitting

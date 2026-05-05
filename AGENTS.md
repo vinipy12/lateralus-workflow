@@ -12,5 +12,8 @@ Target Python 3.13, keep modules and functions in `snake_case`, classes in `Pasc
 ## Workflow Development
 Treat `$workflow` as the canonical interface. Keep `/workflow ...` only as legacy compatibility through the hook files. Do not commit live runtime state unless it is intentionally an example or baseline artifact. When changing the workflow contract, update the schemas, examples, skill instructions, and tests together.
 
+## Slice Handoff
+When a completed slice is large enough to justify a pull request, stop expanding the implementation, push the branch, and open a PR with a grounded title and description based on the actual diff and verification. After the PR is open, report that it is ready for the user to manually babysit review comments and coding-change suggestions.
+
 ## Review
 Use `code_review.md` for review-gate behavior. Findings should focus on correctness, regressions, state-machine drift, stale instructions, and missing verification.

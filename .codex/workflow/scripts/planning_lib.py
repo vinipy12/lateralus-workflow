@@ -751,6 +751,7 @@ def planning_activation_prompt(state: dict[str, Any], *, revision_mode: bool = F
         "- Feature plans must stay aligned with repo memory and must not re-introduce items listed as deferred scope.\n"
         "- Each step in the approved plan must include justification, files_read_first, interfaces_to_preserve, avoid_touching, and verification_targets.\n"
         "- Each step should declare wave, file ownership, dependency edges, and rollback/watchpoint notes when the blast radius warrants them.\n"
+        "- Set `agents_update_required: true` on any step that changes durable agent guidance, workflow conventions, or verification rules.\n"
         "- Execution now includes a UAT gate before ship and writes local telemetry under `.codex/workflow/metrics/`; plan the milestone so those artifacts stay auditable.\n"
         "- Any step that claims compatibility or verification across discovered entry points must include the "
         "direct consumer tests implied by that blast radius, not just a broad end-to-end check.\n"

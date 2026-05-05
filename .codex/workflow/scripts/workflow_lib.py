@@ -467,6 +467,8 @@ def _validate_step(step: dict[str, Any]) -> None:
                 raise ValueError(f"{list_name} must contain non-empty strings for {step['id']}")
     if "wave" in step and not _is_positive_int(step["wave"]):
         raise ValueError(f"wave must be a positive integer for {step['id']}")
+    if "agents_update_required" in step and not isinstance(step["agents_update_required"], bool):
+        raise ValueError(f"agents_update_required must be a boolean for {step['id']}")
     _validate_review_record(step["review_record"], step=step)
 
 
@@ -552,6 +554,7 @@ def _normalize_plan_step(raw_step: dict[str, Any], *, index: int) -> dict[str, A
     done_when = _ensure_string_list(raw_step.get("done_when", []), field_name=f"done_when for {step_id}")
     verify_cmds = _ensure_string_list(raw_step.get("verify_cmds", []), field_name=f"verify_cmds for {step_id}")
     agents_paths = _ensure_agents_paths(raw_step.get("agents_paths", []), field_name=f"agents_paths for {step_id}")
+    agents_update_required = _normalize_agents_update_required(raw_step, step_id=step_id)
     if not agents_paths:
         agents_paths = infer_agents_paths(context)
     if not agents_paths:
@@ -583,6 +586,8 @@ def _normalize_plan_step(raw_step: dict[str, Any], *, index: int) -> dict[str, A
         "review_summary": review_summary,
         "review_record": None,
     }
+    if agents_update_required:
+        normalized_step["agents_update_required"] = True
     justification = str(raw_step.get("justification") or "").strip()
     if justification:
         normalized_step["justification"] = justification
@@ -761,6 +766,7 @@ def _validate_plan_step(
         "file_ownership",
         "rollback_notes",
         "operational_watchpoints",
+        "agents_update_required",
     }
     unknown_fields = sorted(set(step.keys()) - allowed_fields)
     if unknown_fields:
@@ -837,6 +843,8 @@ def _validate_plan_step(
             _ensure_string_list(step[optional_list_name], field_name=f"{optional_list_name} for {step_id}")
     if "wave" in step and not _is_positive_int(step["wave"]):
         raise ValueError(f"wave must be a positive integer for {step_id}")
+    if "agents_update_required" in step and not isinstance(step["agents_update_required"], bool):
+        raise ValueError(f"agents_update_required must be a boolean for {step_id}")
 
     return step_id, set(requirement_ids)
 
@@ -1019,6 +1027,11 @@ def validate_review_transition(
         if verification_status != "passed":
             errors.append(
                 "set-step-status commit_pending requires --verification-status passed"
+            )
+        if step.get("agents_update_required") and review_record["agents_updated"] is not True:
+            errors.append(
+                "set-step-status commit_pending requires --agents-updated true because "
+                f"{step['id']} is marked agents_update_required"
             )
     else:
         if finding_count <= 0:
@@ -1425,6 +1438,12 @@ def _implementation_prompt(state: dict[str, Any], step: dict[str, Any], *, is_st
         "Operational watchpoints",
         step.get("operational_watchpoints", []),
     )
+    agents_update_required_section = (
+        "Durable guidance update required:\n"
+        "- This step is marked `agents_update_required`; update the listed `AGENTS.md` files before review can pass.\n\n"
+        if step.get("agents_update_required")
+        else ""
+    )
     return (
         f"{intro}\n\n"
         f"Current workflow: `{state['workflow_name']}`.\n"
@@ -1452,6 +1471,7 @@ def _implementation_prompt(state: dict[str, Any], step: dict[str, Any], *, is_st
         f"Done when:\n{done_lines}\n\n"
         f"Verification commands:\n{verify_lines}\n\n"
         f"AGENTS.md scope check:\n{agents_lines}\n\n"
+        f"{agents_update_required_section}"
         "Before you try to stop this turn, do all of the following:\n"
         "- Finish the step's implementation.\n"
         "- Run the step verification commands that apply.\n"
@@ -1463,6 +1483,7 @@ def _implementation_prompt(state: dict[str, Any], step: dict[str, Any], *, is_st
 
 
 def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
+    required_checks_lines = _bullets(_review_required_checks(step))
     fix_command = _review_status_command(
         step,
         status="fix_pending",
@@ -1501,6 +1522,7 @@ def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         "- Record scope confirmation for the current step.\n"
         "- Record whether verification passed or is blocked, and include the blocker note when blocked.\n"
         "- Record every `AGENTS.md` file checked, whether any required updates were made, and the material finding count.\n\n"
+        f"Required checks before pass:\n{required_checks_lines}\n\n"
         "If you find issues:\n"
         f"- Run `{fix_command}`.\n"
         f"- If verification is blocked, run `{blocked_fix_command}` instead.\n"
@@ -1510,6 +1532,23 @@ def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         f"- Run `{commit_command}`.\n"
         "- Continue so the workflow can move to the commit phase."
     )
+
+
+def _review_required_checks(step: dict[str, Any]) -> list[str]:
+    checks = [
+        "Relevant verification commands ran, or the blocker is recorded with --verification-status blocked and --verification-note.",
+        "Review scope stayed inside the current execution step, recorded with --scope-confirmed true.",
+        "Every required AGENTS.md path was checked and recorded with --agents-checked.",
+    ]
+    if step.get("agents_update_required"):
+        checks.append(
+            "This step is marked agents_update_required; a passing review must use --agents-updated true."
+        )
+    else:
+        checks.append(
+            "Any stale durable AGENTS guidance is a material finding; use --agents-updated true only if guidance changed."
+        )
+    return checks
 
 
 def _fix_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
@@ -1785,6 +1824,33 @@ def _normalize_repo_relative_path(value: str, *, field_name: str) -> str:
     if any(part in {"", ".", ".."} for part in parts):
         raise ValueError(f"{field_name} must contain repo-relative paths")
     return Path(*parts).as_posix()
+
+
+def _normalize_agents_update_required(raw_step: dict[str, Any], *, step_id: str) -> bool:
+    inferred_from_touched_agents_path = _step_touches_agents_path(raw_step)
+    value = raw_step.get("agents_update_required")
+    if value is not None:
+        if not isinstance(value, bool):
+            raise ValueError(f"agents_update_required must be a boolean for {step_id}")
+        return value or inferred_from_touched_agents_path
+    return inferred_from_touched_agents_path
+
+
+def _step_touches_agents_path(raw_step: dict[str, Any]) -> bool:
+    candidate_paths: list[str] = []
+    for list_name in ("planned_updates", "planned_creates", "file_ownership"):
+        items = raw_step.get(list_name, [])
+        if isinstance(items, list):
+            candidate_paths.extend(item.strip() for item in items if isinstance(item, str))
+    return any(_is_agents_md_path(path) for path in candidate_paths)
+
+
+def _is_agents_md_path(value: str) -> bool:
+    try:
+        normalized = _normalize_repo_relative_path(value, field_name="agents_update_required path")
+    except ValueError:
+        return False
+    return normalized.endswith("AGENTS.md")
 
 
 def _validate_review_record(review_record: Any, *, step: dict[str, Any]) -> None:

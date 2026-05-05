@@ -16,6 +16,7 @@ WORKFLOW_SCRIPTS_DIR = REPO_ROOT / ".codex" / "workflow" / "scripts"
 WORKFLOW_LIB_PATH = WORKFLOW_SCRIPTS_DIR / "workflow_lib.py"
 PLANNING_LIB_PATH = WORKFLOW_SCRIPTS_DIR / "planning_lib.py"
 USER_PROMPT_HOOK_PATH = WORKFLOW_SCRIPTS_DIR / "user_prompt_hook.py"
+STOP_HOOK_PATH = WORKFLOW_SCRIPTS_DIR / "stop_hook.py"
 WORKFLOW_ROUTER_LIB_PATH = WORKFLOW_SCRIPTS_DIR / "workflow_router_lib.py"
 STATE_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "state.example.json"
 PLANNING_STATE_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "planning_state.example.json"
@@ -55,6 +56,10 @@ def _load_planning_lib():
 
 def _load_user_prompt_hook():
     return _load_module("codex_user_prompt_hook", USER_PROMPT_HOOK_PATH)
+
+
+def _load_stop_hook():
+    return _load_module("codex_stop_hook", STOP_HOOK_PATH)
 
 
 def _load_workflow_router_lib():
@@ -1022,6 +1027,55 @@ def test_user_prompt_hook_blocks_execution_activation_while_planning_exists():
     payload = json.loads(stdout.getvalue())
     assert "blocked" in payload["systemMessage"]
     assert "planning-approve" in payload["hookSpecificOutput"]["additionalContext"]
+
+
+def test_stop_hook_emits_escalation_metrics_for_legacy_execution_path(monkeypatch):
+    workflow_lib = _load_workflow_lib()
+    stop_hook = _load_stop_hook()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _rebase_execution_state_paths(
+            workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md"),
+            tmpdir,
+        )
+        state["steps"][0]["status"] = "review_pending"
+        state["steps"][0]["verify_cmds"] = []
+        workflow_lib.save_state(state, state_path)
+
+        stdout = io.StringIO()
+        original_state_path = stop_hook.DEFAULT_STATE_PATH
+        try:
+            stop_hook.DEFAULT_STATE_PATH = state_path
+            monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+            with contextlib.redirect_stdout(stdout):
+                result_code = stop_hook.main()
+        finally:
+            stop_hook.DEFAULT_STATE_PATH = original_state_path
+
+        persisted_state = workflow_lib.load_state(state_path)
+        events = [
+            json.loads(line)
+            for line in (Path(state["metrics_dir"]) / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        scorecard = json.loads((Path(state["metrics_dir"]) / "scorecard.json").read_text(encoding="utf-8"))
+
+    assert result_code == 0
+    payload = json.loads(stdout.getvalue())
+    assert payload["decision"] == "block"
+    assert persisted_state["workflow_status"] == "execution_escalated"
+    assert persisted_state["escalation"]["code"] == "verification_missing"
+    assert [event["event"] for event in events] == [
+        "deterministic_sensor_failed",
+        "execution_escalation_entered",
+    ]
+    assert events[0]["category"] == "verification_missing"
+    assert events[0]["source"] == "stop_hook"
+    assert events[1]["category"] == "verification_missing"
+    assert scorecard["counts"]["deterministic_sensor_failed"] == 1
+    assert scorecard["counts"]["execution_escalation_entered"] == 1
+
 
 def test_workflow_router_resume_advances_execution_state():
     workflow_lib = _load_workflow_lib()

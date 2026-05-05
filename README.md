@@ -10,7 +10,7 @@ The workflow kernel currently includes:
 - repo-root project memory in `PROJECT.md`, `REQUIREMENTS.md`, and `STATE.md`
 - approval-time planning audits
 - explicit discovery-driven direct verification matrices via `current.direct_verification_matrix`
-- orchestration-ready plan metadata such as `depends_on`, `wave`, `file_ownership`, `rollback_notes`, and `operational_watchpoints`
+- orchestration-ready plan metadata such as `depends_on`, `wave`, `file_ownership`, `rollback_notes`, `operational_watchpoints`, and `agents_update_required`
 - stepwise execution with implement, review, fix, commit, UAT, and ship gates
 - repo-local UAT artifacts in `.codex/workflow/uat.json`
 - local telemetry artifacts in `.codex/workflow/metrics/events.jsonl` and `.codex/workflow/metrics/scorecard.json`
@@ -21,6 +21,7 @@ The workflow kernel currently includes:
 Still intentionally deferred:
 
 - broader packaging or multi-skill splitting beyond `$workflow` and `$ship`
+- post-ship PR stewardship for CI watching, quality gates, reviewer-comment triage, re-review loops, and merge-ready summaries
 - telemetry polish beyond the local scorecard
 - bootstrap refinements beyond the current router path
 

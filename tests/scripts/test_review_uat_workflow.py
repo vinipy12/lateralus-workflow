@@ -67,11 +67,14 @@ def _prepare_review_pending_state(
     tmpdir: str,
     *,
     agents_paths: list[str] | None = None,
+    agents_update_required: bool | None = None,
 ) -> Path:
     state_path = Path(tmpdir) / "state.json"
     state = _build_execution_state(workflow_lib, tmpdir)
     if agents_paths is not None:
         state["steps"][0]["agents_paths"] = agents_paths
+    if agents_update_required is not None:
+        state["steps"][0]["agents_update_required"] = agents_update_required
     workflow_lib.save_state(state, state_path)
     review_result = run_workflow_state_command(
         state_path,
@@ -97,6 +100,23 @@ def test_review_pending_step_blocks_for_review_gate():
     assert "--scope-confirmed true" in decision.prompt
     assert "--agents-checked AGENTS.md" in decision.prompt
     assert "--finding-count 0" in decision.prompt
+
+
+def test_review_pending_prompt_surfaces_required_checks_for_guidance_updates():
+    workflow_lib = load_workflow_lib()
+    state = json.loads(STATE_EXAMPLE_PATH.read_text(encoding="utf-8"))
+    state["steps"][0]["status"] = "review_pending"
+    state["steps"][0]["agents_update_required"] = True
+
+    _, decision, changed = workflow_lib.next_stop_decision(deepcopy(state))
+
+    assert changed is False
+    assert decision.action == "block"
+    assert "Required checks before pass" in decision.prompt
+    assert "Relevant verification commands ran" in decision.prompt
+    assert "Review scope stayed inside the current execution step" in decision.prompt
+    assert "Every required AGENTS.md path was checked" in decision.prompt
+    assert "a passing review must use --agents-updated true" in decision.prompt
 
 
 def test_workflow_state_review_pending_requires_pre_review_sensors():
@@ -375,6 +395,63 @@ def test_workflow_state_commit_pending_rejected_when_agents_checked_omit_require
 
     assert result.returncode != 0
     assert "docs/AGENTS.md" in result.stderr
+
+
+def test_workflow_state_commit_pending_rejected_when_required_agents_update_is_not_recorded():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(
+            workflow_lib,
+            tmpdir,
+            agents_update_required=True,
+        )
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(summary="review passed", agents_updated=False, finding_count=0),
+        )
+
+    assert result.returncode != 0
+    assert "--agents-updated true" in result.stderr
+    assert "agents_update_required" in result.stderr
+
+
+def test_workflow_state_commit_pending_accepts_recorded_required_agents_update():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(
+            workflow_lib,
+            tmpdir,
+            agents_update_required=True,
+        )
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(summary="review passed", agents_updated=True, finding_count=0),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["steps"][0]["status"] == "commit_pending"
+    assert persisted_state["steps"][0]["review_record"]["agents_updated"] is True
+
+
+def test_plan_step_infers_required_agents_update_from_agents_path_changes():
+    workflow_lib = load_workflow_lib()
+    plan = example_plan()
+    plan["steps"][0]["planned_updates"].append("AGENTS.md")
+
+    state = workflow_lib.build_state_from_plan_spec(plan, plan_path="PLANS.md")
+
+    assert state["steps"][0]["agents_update_required"] is True
 
 
 def test_workflow_state_fix_pending_rejected_when_finding_count_is_zero():

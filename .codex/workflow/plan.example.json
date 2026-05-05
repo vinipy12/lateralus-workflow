@@ -86,6 +86,7 @@
       "operational_watchpoints": [
         "Watch the example module public behavior contract during review and verification."
       ],
+      "agents_update_required": false,
       "done_when": [
         "The behavior works.",
         "The targeted test passes."
@@ -152,6 +153,7 @@
       "operational_watchpoints": [
         "Watch downstream consumers of the second example module while step 2 lands."
       ],
+      "agents_update_required": false,
       "done_when": [
         "The second slice works.",
         "The follow-up targeted test passes."

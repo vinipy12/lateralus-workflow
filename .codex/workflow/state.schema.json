@@ -308,6 +308,9 @@
               "minLength": 1
             }
           },
+          "agents_update_required": {
+            "type": "boolean"
+          },
           "status": {
             "type": "string",
             "enum": [
