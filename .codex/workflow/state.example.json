@@ -2,6 +2,7 @@
   "version": 1,
   "workflow_name": "example feature rollout",
   "workflow_status": "active",
+  "escalation": null,
   "mode": "ship",
   "plan_path": "PLANS.md",
   "review_path": "code_review.md",
@@ -72,8 +73,10 @@
       "operational_watchpoints": [
         "Watch the example module public behavior contract during review and verification."
       ],
+      "agents_update_required": false,
       "status": "implementing",
-      "review_summary": null
+      "review_summary": null,
+      "review_record": null
     },
     {
       "id": "step-2",
@@ -132,8 +135,10 @@
       "operational_watchpoints": [
         "Watch downstream consumers of the second example module while step 2 lands."
       ],
+      "agents_update_required": false,
       "status": "pending",
-      "review_summary": null
+      "review_summary": null,
+      "review_record": null
     }
   ]
 }

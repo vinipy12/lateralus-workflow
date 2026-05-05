@@ -662,6 +662,7 @@ The current plan schema is already good, but a stronger subagent handoff contrac
 - `files_read_first`
 - `rollback_notes`
 - `operational_watchpoints`
+- `agents_update_required`
 
 ## Machine audits to add
 

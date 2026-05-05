@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sys
 
+from workflow_metrics import emit_execution_transition_metrics
 from workflow_lib import DEFAULT_STATE_PATH, load_state, next_stop_decision, save_state
 
 
@@ -21,11 +22,17 @@ def main() -> int:
     if state is None:
         return 0
 
+    previous_status = state["workflow_status"]
     state, decision, changed = next_stop_decision(state)
     if changed:
         save_state(state, DEFAULT_STATE_PATH)
+        emit_execution_transition_metrics(
+            state,
+            previous_status=previous_status,
+            source="stop_hook",
+        )
 
-    if decision.action == "block" and decision.prompt:
+    if decision.action in {"block", "escalate"} and decision.prompt:
         print(json.dumps({"decision": "block", "reason": decision.prompt}))
     return 0
 

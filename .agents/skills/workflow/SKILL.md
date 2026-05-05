@@ -37,6 +37,7 @@ For a new feature request:
    - `STATE.md` for active initiative, latest decisions, release state, and unresolved risks
 6. Before approval, run `python3 .agents/skills/workflow/scripts/planning_state.py audit-plan`.
 7. When the plan is ready, use `planning-approve` to transition into execution.
+8. When a step changes durable agent guidance, workflow conventions, or verification rules, set `agents_update_required: true` on that step and include the relevant `agents_paths`.
 
 For greenfield/bootstrap work:
 
@@ -56,14 +57,24 @@ For plan revisions:
 For an active execution workflow:
 
 1. Run `resume` to load the exact next instruction for the current step.
-2. Use `python3 .agents/skills/workflow/scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
-3. Record UAT outcomes with `python3 .agents/skills/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`.
-4. When the workflow reaches ship, use `$ship`.
+2. Keep the phase boundary explicit:
+   - Development ends only when the current step reaches `committed`.
+   - `set-step-status ... review_pending` runs deterministic pre-review sensors before inferential review.
+   - Review is a hard gate before commit; do not bypass it.
+   - Record review outcomes inline on `set-step-status ... fix_pending|commit_pending` with `--review-summary`, `--scope-confirmed true|false`, `--verification-status passed|blocked`, `--verification-note` when blocked, repeatable `--agents-checked`, `--agents-updated true|false`, and `--finding-count <n>`.
+   - If the current step has `agents_update_required: true`, a passing review must record `--agents-updated true`; stale durable guidance remains a material finding until then.
+   - Deployment begins only after UAT moves the workflow to `ship_pending`.
+3. Use `python3 .agents/skills/workflow/scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
+4. If execution enters `execution_escalated`, fix the blocker and clear it with `python3 .agents/skills/workflow/scripts/workflow_state.py resolve-escalation`; that restores the workflow to its pre-escalation phase before normal execution resumes.
+5. Record UAT outcomes with `python3 .agents/skills/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`.
+6. Treat `set-workflow-status complete` as the final ship-only transition. Other manual workflow-status edits require `--override-reason`.
+7. When the workflow reaches `ship_pending`, use `$ship` instead of starting the next unrelated kernel slice.
 
 For direct activation from an approved plan artifact:
 
 1. Run `execution-start [plan-file]`.
 2. If the plan file contains multiple JSON plans, pass `--plan-id <id>`.
+3. If the workflow uses non-default state files, pass both `--planning-state-path` and `--execution-state-path` so activation checks the matching planning session.
 
 ## Status And Cancellation
 
@@ -77,6 +88,8 @@ For direct activation from an approved plan artifact:
 - Read `AGENTS.md` before acting on execution steps.
 - Keep planning JSON-first and execution stepwise.
 - Treat `.codex/workflow/metrics/` and `.codex/workflow/uat.json` as auditable local artifacts, not scratch files.
+- When a completed slice is PR-sized, push it and open a grounded PR before continuing broader kernel work; report when the PR is ready for the user to manually babysit.
+- When the user asks to follow or continue `next-steps.md`, treat the ship handoff as part of the work for any PR-sized completed slice; do not wait for a separate "ship" prompt unless the user explicitly pauses before PR creation.
 - Respect phase ownership:
   - planning updates `PROJECT.md` only when product intent or durable constraints change
   - planning updates `REQUIREMENTS.md` when scope or backlog commitments change

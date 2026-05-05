@@ -19,6 +19,14 @@
     "verification_anchors": [
       "tests/example/test_module.py"
     ],
+    "direct_verification_matrix": [
+      {
+        "entry_point": "app/example/module.py",
+        "verification_targets": [
+          "tests/example/test_module.py"
+        ]
+      }
+    ],
     "open_questions": [],
     "complexity_events": []
   },

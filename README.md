@@ -9,16 +9,19 @@ The workflow kernel currently includes:
 - hard-gated planning phases with deterministic advancement
 - repo-root project memory in `PROJECT.md`, `REQUIREMENTS.md`, and `STATE.md`
 - approval-time planning audits
-- orchestration-ready plan metadata such as `depends_on`, `wave`, `file_ownership`, `rollback_notes`, and `operational_watchpoints`
+- explicit discovery-driven direct verification matrices via `current.direct_verification_matrix`
+- orchestration-ready plan metadata such as `depends_on`, `wave`, `file_ownership`, `rollback_notes`, `operational_watchpoints`, and `agents_update_required`
 - stepwise execution with implement, review, fix, commit, UAT, and ship gates
 - repo-local UAT artifacts in `.codex/workflow/uat.json`
 - local telemetry artifacts in `.codex/workflow/metrics/events.jsonl` and `.codex/workflow/metrics/scorecard.json`
 - greenfield bootstrap planning through the existing router
+- focused router, planning-audit, review/UAT, and telemetry regression modules under `tests/scripts/`
 - canonical `compare-plan` baseline fixtures inside `.codex/workflow/`
 
 Still intentionally deferred:
 
 - broader packaging or multi-skill splitting beyond `$workflow` and `$ship`
+- post-ship PR stewardship for CI watching, quality gates, reviewer-comment triage, re-review loops, and merge-ready summaries
 - telemetry polish beyond the local scorecard
 - bootstrap refinements beyond the current router path
 
@@ -31,7 +34,7 @@ Still intentionally deferred:
 - `PROJECT.md`: durable product intent and constraints
 - `REQUIREMENTS.md`: active backlog, accepted requirements, deferred scope, and milestone commitments
 - `STATE.md`: current initiative, latest decisions, release state, and unresolved risks
-- `tests/scripts/test_codex_workflow.py`: focused workflow regression suite
+- `tests/scripts/`: workflow regression suite, including focused router, planning-audit, review/UAT, telemetry, and cross-subsystem integration coverage
 
 ## Current Surface
 
@@ -71,6 +74,8 @@ Planning reads repo memory from:
 - `REQUIREMENTS.md` for scope and backlog commitments
 - `STATE.md` for current initiative and delivery state
 
+For compatibility-sensitive discovery, `current.direct_verification_matrix` can map discovered entry points to the exact direct verification targets the approval audit should require. The audit uses that explicit mapping first and falls back to inferred test paths only when no matrix entry exists.
+
 ## Core Entrypoints
 
 - Native skill: `$workflow`
@@ -84,6 +89,8 @@ Planning reads repo memory from:
   - `python3 .codex/workflow/scripts/workflow_router.py resume`
   - `python3 .codex/workflow/scripts/workflow_router.py status`
   - `python3 .codex/workflow/scripts/workflow_router.py cancel`
+
+When using non-default workflow files, pass the matching `--planning-state-path` and `--execution-state-path` values to router commands that cross the planning/execution boundary, including `execution-start`, so guardrails inspect the same workflow session.
 - Planning state CLI:
   - `python3 .codex/workflow/scripts/planning_state.py show`
   - `python3 .codex/workflow/scripts/planning_state.py validate`
@@ -93,20 +100,31 @@ Planning reads repo memory from:
   - `python3 .codex/workflow/scripts/planning_state.py compare-plan`
 - Execution state CLI:
   - `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> <status>`
+  - Review fail: `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> fix_pending --review-summary "..." --scope-confirmed true --verification-status passed --agents-checked AGENTS.md --agents-updated false --finding-count 1`
+  - Review pass: `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> commit_pending --review-summary "review passed" --scope-confirmed true --verification-status passed --agents-checked AGENTS.md --agents-updated false --finding-count 0`
+  - `python3 .codex/workflow/scripts/workflow_state.py resolve-escalation`
   - `python3 .codex/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`
-  - `python3 .codex/workflow/scripts/workflow_state.py set-workflow-status <status>`
+  - `python3 .codex/workflow/scripts/workflow_state.py set-workflow-status complete`
+  - `python3 .codex/workflow/scripts/workflow_state.py set-workflow-status <status> --override-reason "..."`
 
 ## Execution Model
 
 Execution now ends with a blocking post-code control loop:
 
-1. implementation, review, and commit per step
-2. `uat_pending` after the last committed step
-3. `gap_closure_pending` for fixable UAT gaps inside the same workflow
-4. `replan_required` when UAT shows a scope or architecture mismatch
-5. `ship_pending` only after UAT passes
+1. Development owns implementation through `committed` for each step
+2. `set-step-status ... review_pending` runs deterministic pre-review sensors before inferential review
+3. `execution_escalated` blocks the workflow when deterministic sensors fail or execution state becomes ambiguous
+4. Review remains embedded in execution and blocks promotion to commit
+   - `fix_pending` and `commit_pending` now require inline review evidence: summary, scope confirmation, verification result or blocker note, checked `AGENTS.md` paths, whether AGENTS changed, and the material finding count
+5. `uat_pending` after the last committed step
+6. `gap_closure_pending` for fixable UAT gaps inside the same workflow
+7. `replan_required` when UAT shows a scope or architecture mismatch
+8. `ship_pending` only after UAT passes
+9. Deployment is intentionally limited to branch push, PR creation, optional `@codex review`, and workflow completion
 
-Telemetry stays local and auditable under `.codex/workflow/metrics/`.
+Clear normal execution escalations with `python3 .codex/workflow/scripts/workflow_state.py resolve-escalation` after the blocker is fixed; the workflow returns to the pre-escalation phase instead of always dropping back to `active`. Manual workflow-status jumps are still override-only operations. `set-workflow-status complete` is reserved for the real ship path after the current step is already `shipped`.
+
+Telemetry stays local and auditable under `.codex/workflow/metrics/`, including escalation categories and repeated review/UAT loop counts in the scorecard.
 
 ## Installation
 
@@ -145,9 +163,14 @@ This repo works as a Codex plugin. The simplest local install path is to keep it
 ## Development
 
 - Install dev dependencies: `uv sync --dev`
-- Run workflow tests: `uv run pytest tests/scripts/test_codex_workflow.py`
+- Run workflow tests: `uv run pytest tests/scripts/`
+- Run focused router CLI tests: `uv run pytest tests/scripts/test_workflow_router_cli.py`
+- Run focused planning audit tests: `uv run pytest tests/scripts/test_planning_audit.py`
+- Run focused review/UAT tests: `uv run pytest tests/scripts/test_review_uat_workflow.py`
+- Run focused telemetry tests: `uv run pytest tests/scripts/test_telemetry_contract.py`
 - Inspect workflow status: `python3 .codex/workflow/scripts/workflow_router.py status`
 - Start greenfield bootstrap planning: `python3 .codex/workflow/scripts/workflow_router.py bootstrap-start "..."`
+- Clear an execution escalation after fixing the blocker: `python3 .codex/workflow/scripts/workflow_state.py resolve-escalation`
 - Record a UAT outcome: `python3 .codex/workflow/scripts/workflow_state.py set-uat-status passed --summary "..."`
 - Compare baseline vs candidate plan quality: `python3 .codex/workflow/scripts/planning_state.py compare-plan`
 - Validate the plugin manifest JSON: `python3 -m json.tool .codex-plugin/plugin.json`
