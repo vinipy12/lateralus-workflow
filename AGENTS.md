@@ -15,5 +15,7 @@ Treat `$workflow` as the canonical interface. Keep `/workflow ...` only as legac
 ## Slice Handoff
 When a completed slice is large enough to justify a pull request, stop expanding the implementation, push the branch, and open a PR with a grounded title and description based on the actual diff and verification. After the PR is open, report that it is ready for the user to manually babysit review comments and coding-change suggestions.
 
+When the user asks to follow or continue `next-steps.md`, treat PR handoff as part of the requested work. After finishing and verifying a PR-sized slice from `next-steps.md`, automatically run the ship handoff instead of waiting for a separate prompt, unless the user explicitly asks to stop before PR creation.
+
 ## Review
 Use `code_review.md` for review-gate behavior. Findings should focus on correctness, regressions, state-machine drift, stale instructions, and missing verification.

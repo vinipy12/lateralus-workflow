@@ -89,6 +89,7 @@ For direct activation from an approved plan artifact:
 - Keep planning JSON-first and execution stepwise.
 - Treat `.codex/workflow/metrics/` and `.codex/workflow/uat.json` as auditable local artifacts, not scratch files.
 - When a completed slice is PR-sized, push it and open a grounded PR before continuing broader kernel work; report when the PR is ready for the user to manually babysit.
+- When the user asks to follow or continue `next-steps.md`, treat the ship handoff as part of the work for any PR-sized completed slice; do not wait for a separate "ship" prompt unless the user explicitly pauses before PR creation.
 - Respect phase ownership:
   - planning updates `PROJECT.md` only when product intent or durable constraints change
   - planning updates `REQUIREMENTS.md` when scope or backlog commitments change
