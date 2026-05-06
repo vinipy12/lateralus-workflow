@@ -183,6 +183,36 @@ def test_install_returns_nonzero_when_source_update_is_blocked(tmp_path, monkeyp
     assert "Install blocked" in captured.err
 
 
+def test_update_git_checkout_blocks_missing_source_checkout(tmp_path):
+    plugin_script = _load_plugin_script()
+
+    result = plugin_script.update_git_checkout(tmp_path / "missing-source", "main")
+
+    assert result.status == "blocked"
+    assert result.detail == "not a git checkout"
+
+
+def test_check_and_update_return_nonzero_when_source_checkout_is_missing(tmp_path, capsys):
+    plugin_script = _load_plugin_script()
+
+    for command in ("check", "update"):
+        exit_code = plugin_script.main(
+            [
+                "--plugin-dir",
+                str(tmp_path / ".codex" / "plugins" / f"missing-{command}"),
+                "--codex-home",
+                str(tmp_path / ".codex"),
+                command,
+            ]
+        )
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        assert "blocked" in captured.out
+        assert "not a git checkout" in captured.out
+        assert "Restart Codex" not in captured.out
+
+
 def test_update_source_and_caches_syncs_snapshot_cache_after_source_update(tmp_path, monkeypatch):
     plugin_script = _load_plugin_script()
     codex_home = tmp_path / ".codex"

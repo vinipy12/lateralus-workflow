@@ -151,7 +151,7 @@ def ensure_source_checkout(plugin_dir: Path, repository_url: str, ref: str) -> N
 
 def update_git_checkout(path: Path, ref: str, *, check_only: bool = False) -> GitUpdateResult:
     if not (path / ".git").exists():
-        return GitUpdateResult(path=path, status="skipped", detail="not a git checkout")
+        return GitUpdateResult(path=path, status="blocked", detail="not a git checkout")
 
     dirty = _git(path, "status", "--porcelain")
     if dirty.strip():
