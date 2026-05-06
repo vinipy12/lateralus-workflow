@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,6 +18,10 @@ def _load_plugin_script():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
 
 
 def test_marketplace_source_path_uses_codex_home_under_personal_root(tmp_path):
@@ -219,6 +224,42 @@ def test_update_git_checkout_blocks_missing_source_checkout(tmp_path):
 
     assert result.status == "blocked"
     assert result.detail == "not a git checkout"
+
+
+def test_update_git_checkout_blocks_non_fast_forward_divergence(tmp_path):
+    plugin_script = _load_plugin_script()
+    origin = tmp_path / "origin.git"
+    seed = tmp_path / "seed"
+    plugin_dir = tmp_path / "plugin"
+    seed.mkdir()
+    _run_git(tmp_path, "init", "--bare", str(origin))
+    _run_git(seed, "init", "--initial-branch", "main")
+    _run_git(seed, "config", "user.email", "test@example.com")
+    _run_git(seed, "config", "user.name", "Test User")
+    seed.joinpath("README.md").write_text("initial\n", encoding="utf-8")
+    _run_git(seed, "add", "README.md")
+    _run_git(seed, "commit", "-m", "initial")
+    _run_git(seed, "remote", "add", "origin", str(origin))
+    _run_git(seed, "push", "-u", "origin", "main")
+    _run_git(origin, "symbolic-ref", "HEAD", "refs/heads/main")
+    _run_git(tmp_path, "clone", str(origin), str(plugin_dir))
+    _run_git(plugin_dir, "config", "user.email", "test@example.com")
+    _run_git(plugin_dir, "config", "user.name", "Test User")
+
+    seed.joinpath("remote.txt").write_text("remote\n", encoding="utf-8")
+    _run_git(seed, "add", "remote.txt")
+    _run_git(seed, "commit", "-m", "remote change")
+    _run_git(seed, "push", "origin", "main")
+    plugin_dir.joinpath("local.txt").write_text("local\n", encoding="utf-8")
+    _run_git(plugin_dir, "add", "local.txt")
+    _run_git(plugin_dir, "commit", "-m", "local change")
+
+    check_result = plugin_script.update_git_checkout(plugin_dir, "main", check_only=True)
+    update_result = plugin_script.update_git_checkout(plugin_dir, "main")
+
+    assert check_result.status == "blocked"
+    assert update_result.status == "blocked"
+    assert "cannot fast-forward" in (update_result.detail or "")
 
 
 def test_check_and_update_return_nonzero_when_source_checkout_is_missing(tmp_path, capsys):

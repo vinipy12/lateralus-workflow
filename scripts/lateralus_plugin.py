@@ -165,6 +165,8 @@ def update_git_checkout(path: Path, ref: str, *, check_only: bool = False) -> Gi
     upstream = _git(path, "rev-parse", "--verify", f"origin/{ref}").strip()
     if before == upstream and current_ref == ref:
         return GitUpdateResult(path=path, status="up-to-date", before=before, after=before)
+    if current_ref == ref and not _can_fast_forward(path, before, upstream):
+        return _non_fast_forward_result(path, ref, before=before, after=upstream)
     if check_only:
         detail = None if current_ref == ref else f"checked out {current_ref}, target is {ref}"
         return GitUpdateResult(path=path, status="update-available", before=before, after=upstream, detail=detail)
@@ -174,9 +176,48 @@ def update_git_checkout(path: Path, ref: str, *, check_only: bool = False) -> Gi
             _git(path, "switch", ref)
         else:
             _git(path, "switch", "--track", "-c", ref, f"origin/{ref}")
-    _git(path, "pull", "--ff-only", "origin", ref)
+    local_head = _git(path, "rev-parse", "HEAD").strip()
+    if not _can_fast_forward(path, local_head, upstream):
+        return _non_fast_forward_result(path, ref, before=local_head, after=upstream)
+    try:
+        _git(path, "pull", "--ff-only", "origin", ref)
+    except subprocess.CalledProcessError as exc:
+        return GitUpdateResult(
+            path=path,
+            status="blocked",
+            before=local_head,
+            after=upstream,
+            detail=f"fast-forward update failed: {_process_error_detail(exc)}",
+        )
     after = _git(path, "rev-parse", "HEAD").strip()
     return GitUpdateResult(path=path, status="updated", before=before, after=after)
+
+
+def _can_fast_forward(path: Path, before: str, after: str) -> bool:
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", before, after],
+        cwd=path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _non_fast_forward_result(path: Path, ref: str, *, before: str, after: str) -> GitUpdateResult:
+    return GitUpdateResult(
+        path=path,
+        status="blocked",
+        before=before,
+        after=after,
+        detail=f"local {ref} cannot fast-forward to origin/{ref}; resolve divergent commits",
+    )
+
+
+def _process_error_detail(exc: subprocess.CalledProcessError) -> str:
+    stderr = (exc.stderr or "").strip()
+    stdout = (exc.stdout or "").strip()
+    return stderr or stdout or str(exc)
 
 
 def update_cache_copy(cache_dir: Path, source_dir: Path, ref: str, *, check_only: bool = False) -> GitUpdateResult:
