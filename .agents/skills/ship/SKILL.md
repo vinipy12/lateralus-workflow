@@ -6,7 +6,7 @@ description: Finish a ship-ready branch by validating the final workflow state, 
 # Ship
 
 Use this skill for the final publication phase after execution has reached `ship_pending`.
-Use the repo-local `.agents/skills/ship/scripts/workflow_state.py` wrapper when you need to update workflow state from this checkout.
+Use the bundled `scripts/workflow_state.py` wrapper when you need to update workflow state. Resolve it relative to this skill directory; do not assume the target project has `.agents/skills/` checked in.
 
 ## Inputs
 
@@ -33,8 +33,8 @@ Use the repo-local `.agents/skills/ship/scripts/workflow_state.py` wrapper when 
 9. Mark the workflow complete:
    - Deployment scope here is branch push, PR creation, optional `@codex review`, and workflow completion only.
    - Update `STATE.md` if shipping changed release state, latest decisions, or unresolved risks.
-   - `python3 .agents/skills/ship/scripts/workflow_state.py set-step-status <current-step-id> shipped`
-   - `python3 .agents/skills/ship/scripts/workflow_state.py set-workflow-status complete`
+   - `python3 scripts/workflow_state.py set-step-status <current-step-id> shipped`
+   - `python3 scripts/workflow_state.py set-workflow-status complete`
 
 ## Rules
 

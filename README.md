@@ -41,12 +41,14 @@ Still intentionally deferred:
 The plugin currently exposes:
 
 - `$workflow` for brownfield planning, greenfield bootstrap planning, revision, approval, resume, status, cancel, and execution activation
+- `$lateralus-workflow` as a package-name alias for users who try to invoke the plugin by its install name
 - `$ship` for the publish phase after the workflow reaches ship readiness
 - repo-local legacy `/workflow ...` hooks defined in `.codex/hooks.json`
 
 Installing the plugin does not activate `.codex/hooks.json`; users who want the legacy `/workflow ...` trigger must wire those hooks into their own Codex config separately. `$workflow` remains the intended interface.
 
-Installed plugin skills use the bundled wrappers under `.agents/skills/*/scripts/`. When developing this repository directly, use the repo-local `.codex/workflow/scripts/...` commands below.
+Installed plugin skills use the bundled wrappers under each skill's `scripts/` directory and operate on the active project checkout. Do not copy `.agents/skills/` into every target repo.
+When developing this repository directly, use the repo-local `.codex/workflow/scripts/...` commands below.
 
 ## Planning Model
 
@@ -126,25 +128,32 @@ Clear normal execution escalations with `python3 .codex/workflow/scripts/workflo
 
 Telemetry stays local and auditable under `.codex/workflow/metrics/`, including escalation categories and repeated review/UAT loop counts in the scorecard.
 
-## Installation
+## Installation And Updates
 
-This repo works as a Codex plugin. The simplest local install path is to keep it at `~/plugins/lateralus-workflow` so the marketplace entry stays standard.
+This repo works as a Codex plugin. The supported personal install keeps the source checkout under Codex home at `~/.codex/plugins/lateralus-workflow` and writes a marketplace entry that points there.
 
-1. Clone the repo into `~/plugins/lateralus-workflow`.
-2. Add an entry to `~/.agents/plugins/marketplace.json` like this:
+From a checkout of this repo, run:
+
+```bash
+python3 scripts/lateralus_plugin.py install
+```
+
+That command clones or reuses `~/.codex/plugins/lateralus-workflow`, writes `~/.agents/plugins/marketplace.json`, and updates any installed cache copies it can find under `~/.codex/plugins/cache/`.
+
+The generated marketplace entry uses this shape:
 
 ```json
 {
-  "name": "local-plugins",
+  "name": "lateralus-local",
   "interface": {
-    "displayName": "Local Plugins"
+    "displayName": "Lateralus Local"
   },
   "plugins": [
     {
       "name": "lateralus-workflow",
       "source": {
         "source": "local",
-        "path": "./plugins/lateralus-workflow"
+        "path": "./.codex/plugins/lateralus-workflow"
       },
       "policy": {
         "installation": "AVAILABLE",
@@ -156,9 +165,26 @@ This repo works as a Codex plugin. The simplest local install path is to keep it
 }
 ```
 
-3. Restart Codex and open `/plugins`.
-4. Install `Lateralus Workflow`.
-5. Start using `$workflow`.
+After installation:
+
+1. Restart Codex and open `/plugins`.
+2. Install or re-enable `Lateralus Workflow`.
+3. Start a new thread.
+4. Use `$workflow <request>` or `$lateralus-workflow: <request>`.
+
+To check for updates without changing files:
+
+```bash
+python3 ~/.codex/plugins/lateralus-workflow/scripts/lateralus_plugin.py check
+```
+
+To fast-forward both the source checkout and installed cache copies:
+
+```bash
+python3 ~/.codex/plugins/lateralus-workflow/scripts/lateralus_plugin.py update
+```
+
+Restart Codex after updating installed plugin files so the active session reloads the new skills.
 
 ## Development
 
@@ -169,6 +195,8 @@ This repo works as a Codex plugin. The simplest local install path is to keep it
 - Run focused review/UAT tests: `uv run pytest tests/scripts/test_review_uat_workflow.py`
 - Run focused telemetry tests: `uv run pytest tests/scripts/test_telemetry_contract.py`
 - Inspect workflow status: `python3 .codex/workflow/scripts/workflow_router.py status`
+- Install or update the personal plugin checkout: `python3 scripts/lateralus_plugin.py install`
+- Check installed plugin copies for updates: `python3 scripts/lateralus_plugin.py check`
 - Start greenfield bootstrap planning: `python3 .codex/workflow/scripts/workflow_router.py bootstrap-start "..."`
 - Clear an execution escalation after fixing the blocker: `python3 .codex/workflow/scripts/workflow_state.py resolve-escalation`
 - Record a UAT outcome: `python3 .codex/workflow/scripts/workflow_state.py set-uat-status passed --summary "..."`

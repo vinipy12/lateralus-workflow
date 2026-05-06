@@ -16,6 +16,8 @@
 - PR stewardship is now a planned post-ship capability, not the current `$ship` contract.
   The intended direction is a PR steward loop that watches CI, quality gates, and reviewer comments, applies relevant fixes, requests re-review, and stops only when the PR is merge-ready or escalation is required.
 - Until PR stewardship is implemented, PR-sized slices should be pushed and opened as grounded PRs, then handed back to the user for manual babysitting of reviewer comments and coding-change suggestions.
+- Packaging hardening is now started for Milestone 3:
+  `$lateralus-workflow` is a package-name alias for `$workflow`, skill instructions no longer assume the target repo has `.agents/skills/`, and `scripts/lateralus_plugin.py` manages the personal Codex checkout plus installed cache updates.
 
 ## Distance To Production Ready
 
@@ -89,6 +91,8 @@
 
 - Revisit packaging and distribution shape after the kernel stays stable.
   Production readiness requires a clean install story, stable wrapper behavior, and confidence that non-authors can use the plugin without special repo knowledge.
+- Keep the personal install/update path working:
+  `scripts/lateralus_plugin.py install`, `check`, and `update` should continue to cover `~/.codex/plugins/lateralus-workflow`, `~/.agents/plugins/marketplace.json`, and installed cache copies under `~/.codex/plugins/cache/`.
 - Tighten release-facing documentation.
   README, skill instructions, examples, and schemas should all describe the same contract and the same supported operational path.
 - Define a production-ready support boundary.
@@ -112,7 +116,7 @@
 
 - Milestone 1: about 75% complete. Router, planning-audit, review/UAT, telemetry, and execution-control escalation mechanics now have focused coverage. The main remaining kernel gaps are stale-guidance review enforcement plus convergence/bootstrap hardening if they remain the highest residual risk.
 - Milestone 2: about 30% complete. Direct verification matrices and some approval explicitness exist, but broader audit explainability and brownfield/greenfield parity are still incomplete.
-- Milestone 3: about 15% complete. The plugin shape and core docs exist, but clean-install validation, packaging confidence, and operational support boundaries are still early.
+- Milestone 3: about 30% complete. The plugin shape, alias trigger, bundled-script instructions, and local install/update helper exist, but clean-install validation across a fresh repo and release-channel semantics still need dogfood proof.
 - Milestone 4: about 0% complete. PR stewardship is product direction only; no current workflow state, schema, skill, or test contract supports it yet.
 
 ## Not The Production Goal
