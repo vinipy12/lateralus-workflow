@@ -29,6 +29,35 @@ def test_marketplace_source_path_uses_codex_home_under_personal_root(tmp_path):
     assert source_path == "./.codex/plugins/lateralus-workflow"
 
 
+def test_default_marketplace_path_tracks_explicit_codex_home_parent(tmp_path):
+    plugin_script = _load_plugin_script()
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "CODEX_HOME": str(tmp_path / "custom-codex-home"),
+    }
+
+    marketplace_path = plugin_script.default_marketplace_path(env)
+    plugin_dir = plugin_script.default_plugin_dir(env)
+
+    assert marketplace_path == tmp_path / ".agents" / "plugins" / "marketplace.json"
+    assert plugin_script.marketplace_source_path(plugin_dir, marketplace_path) == (
+        "./custom-codex-home/plugins/lateralus-workflow"
+    )
+
+
+def test_write_marketplace_zero_arg_defaults_work_with_custom_codex_home(tmp_path, monkeypatch):
+    plugin_script = _load_plugin_script()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "custom-codex-home"))
+
+    exit_code = plugin_script.main(["write-marketplace"])
+
+    marketplace_path = tmp_path / ".agents" / "plugins" / "marketplace.json"
+    payload = json.loads(marketplace_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["plugins"][0]["source"]["path"] == "./custom-codex-home/plugins/lateralus-workflow"
+
+
 def test_write_marketplace_upserts_lateralus_entry(tmp_path):
     plugin_script = _load_plugin_script()
     marketplace_path = tmp_path / ".agents" / "plugins" / "marketplace.json"

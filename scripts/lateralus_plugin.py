@@ -45,7 +45,9 @@ def default_plugin_dir(env: dict[str, str] | None = None) -> Path:
 
 
 def default_marketplace_path(env: dict[str, str] | None = None) -> Path:
-    return home_dir(env) / ".agents" / "plugins" / "marketplace.json"
+    values = env or os.environ
+    root = codex_home(values).parent if values.get("CODEX_HOME") else home_dir(values)
+    return root / ".agents" / "plugins" / "marketplace.json"
 
 
 def marketplace_root(marketplace_path: Path) -> Path:
