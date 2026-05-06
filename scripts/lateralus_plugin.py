@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -16,6 +18,7 @@ DEFAULT_REPOSITORY_URL = "https://github.com/vinipy12/lateralus-workflow.git"
 DEFAULT_REF = "main"
 DEFAULT_MARKETPLACE_NAME = "lateralus-local"
 DEFAULT_MARKETPLACE_DISPLAY_NAME = "Lateralus Local"
+SYNC_EXCLUDED_PARTS = {".git", ".venv", "__pycache__", ".pytest_cache"}
 
 
 @dataclass(frozen=True)
@@ -174,6 +177,74 @@ def update_git_checkout(path: Path, ref: str, *, check_only: bool = False) -> Gi
     return GitUpdateResult(path=path, status="updated", before=before, after=after)
 
 
+def update_cache_copy(cache_dir: Path, source_dir: Path, ref: str, *, check_only: bool = False) -> GitUpdateResult:
+    if (cache_dir / ".git").exists():
+        return update_git_checkout(cache_dir, ref, check_only=check_only)
+    return sync_snapshot_cache(cache_dir, source_dir, check_only=check_only)
+
+
+def sync_snapshot_cache(cache_dir: Path, source_dir: Path, *, check_only: bool = False) -> GitUpdateResult:
+    if not source_dir.exists():
+        return GitUpdateResult(path=cache_dir, status="blocked", detail=f"source checkout missing: {source_dir}")
+    if not cache_dir.exists():
+        return GitUpdateResult(path=cache_dir, status="skipped", detail="cache dir missing")
+
+    source_files = _file_digest_map(source_dir)
+    cache_files = _file_digest_map(cache_dir)
+    if source_files == cache_files:
+        return GitUpdateResult(path=cache_dir, status="up-to-date", detail="snapshot cache")
+    if check_only:
+        return GitUpdateResult(path=cache_dir, status="update-available", detail="snapshot cache differs from source")
+
+    _sync_tree(source_dir, cache_dir, source_files)
+    return GitUpdateResult(path=cache_dir, status="synced", detail="snapshot cache")
+
+
+def _file_digest_map(root: Path) -> dict[str, str]:
+    digests: dict[str, str] = {}
+    if not root.exists():
+        return digests
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        relative = path.relative_to(root)
+        if _should_skip_sync_path(relative):
+            continue
+        digests[relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return digests
+
+
+def _sync_tree(source_dir: Path, cache_dir: Path, source_files: dict[str, str]) -> None:
+    cache_files = _file_digest_map(cache_dir)
+    for relative_name in sorted(set(cache_files) - set(source_files), reverse=True):
+        (cache_dir / relative_name).unlink()
+
+    for relative_name in sorted(source_files):
+        source_path = source_dir / relative_name
+        target_path = cache_dir / relative_name
+        if target_path.exists() and target_path.is_dir():
+            shutil.rmtree(target_path)
+        if target_path.parent.exists() and not target_path.parent.is_dir():
+            target_path.parent.unlink()
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+
+    _remove_empty_dirs(cache_dir)
+
+
+def _remove_empty_dirs(root: Path) -> None:
+    directories = (item for item in root.rglob("*") if item.is_dir())
+    for path in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+        if _should_skip_sync_path(path.relative_to(root)):
+            continue
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+
+
+def _should_skip_sync_path(relative: Path) -> bool:
+    return any(part in SYNC_EXCLUDED_PARTS for part in relative.parts)
+
+
 def _git(cwd: Path, *args: str) -> str:
     return _run(["git", *args], cwd=cwd).stdout
 
@@ -194,11 +265,28 @@ def _print_results(results: list[GitUpdateResult]) -> None:
         print(_result_line(result))
 
 
-def _tracked_dirs(plugin_dir: Path, include_cache: bool, codex_home_path: Path) -> list[Path]:
-    dirs = [plugin_dir]
+def _blocked(results: list[GitUpdateResult]) -> bool:
+    return any(result.status == "blocked" for result in results)
+
+
+def _update_source_and_caches(
+    plugin_dir: Path,
+    codex_home_path: Path,
+    ref: str,
+    *,
+    include_cache: bool,
+    check_only: bool = False,
+) -> list[GitUpdateResult]:
+    source_result = update_git_checkout(plugin_dir, ref, check_only=check_only)
+    results = [source_result]
+    if source_result.status == "blocked":
+        return results
     if include_cache:
-        dirs.extend(find_installed_cache_dirs(codex_home_path))
-    return list(dict.fromkeys(dirs))
+        results.extend(
+            update_cache_copy(cache_dir, plugin_dir, ref, check_only=check_only)
+            for cache_dir in find_installed_cache_dirs(codex_home_path)
+        )
+    return results
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -231,11 +319,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "install":
             ensure_source_checkout(plugin_dir, args.repo, args.ref)
             write_marketplace(marketplace_path, plugin_dir)
-            targets = _tracked_dirs(plugin_dir, not args.skip_cache_update, codex_home_path)
-            results = [update_git_checkout(path, args.ref) for path in targets if path.exists()]
+            results = _update_source_and_caches(
+                plugin_dir,
+                codex_home_path,
+                args.ref,
+                include_cache=not args.skip_cache_update,
+            )
             print(f"marketplace: {marketplace_path}")
             print(f"plugin source: {plugin_dir}")
             _print_results(results)
+            if _blocked(results):
+                print("Install blocked; resolve the issue above and rerun the command.", file=sys.stderr)
+                return 1
             print("Restart Codex, open /plugins, install or re-enable Lateralus Workflow, then start a new thread.")
             return 0
 
@@ -246,17 +341,29 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "check":
-            targets = _tracked_dirs(plugin_dir, not args.skip_cache, codex_home_path)
-            results = [update_git_checkout(path, args.ref, check_only=True) for path in targets if path.exists()]
+            results = _update_source_and_caches(
+                plugin_dir,
+                codex_home_path,
+                args.ref,
+                include_cache=not args.skip_cache,
+                check_only=True,
+            )
             _print_results(results)
-            return 0 if all(result.status != "blocked" for result in results) else 1
+            return 0 if not _blocked(results) else 1
 
         if args.command == "update":
-            targets = _tracked_dirs(plugin_dir, not args.skip_cache, codex_home_path)
-            results = [update_git_checkout(path, args.ref) for path in targets if path.exists()]
+            results = _update_source_and_caches(
+                plugin_dir,
+                codex_home_path,
+                args.ref,
+                include_cache=not args.skip_cache,
+            )
             _print_results(results)
+            if _blocked(results):
+                print("Update blocked; resolve the issue above and rerun the command.", file=sys.stderr)
+                return 1
             print("Restart Codex after updating installed plugin files.")
-            return 0 if all(result.status != "blocked" for result in results) else 1
+            return 0
 
     except (subprocess.CalledProcessError, OSError, ValueError) as exc:
         print(f"lateralus_plugin.py error: {exc}", file=sys.stderr)
