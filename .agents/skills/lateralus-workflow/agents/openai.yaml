@@ -1,0 +1,7 @@
+interface:
+  display_name: "Lateralus Workflow"
+  short_description: "Alias for the workflow plugin"
+  default_prompt: "Use $lateralus-workflow to start, resume, or inspect the Lateralus workflow for this request."
+
+policy:
+  allow_implicit_invocation: false

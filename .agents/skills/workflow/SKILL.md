@@ -9,19 +9,19 @@ Use this skill as the native entrypoint for the repo-local workflow engine.
 
 ## Router First
 
-Prefer the repo-local wrapper CLI over editing workflow JSON by hand:
+Prefer the bundled wrapper CLI over editing workflow JSON by hand. Resolve `scripts/...` relative to this skill directory; do not assume the target project has `.agents/skills/` checked in.
 
-- `python3 .agents/skills/workflow/scripts/workflow_router.py planning-start "<feature request>"`
-- `python3 .agents/skills/workflow/scripts/workflow_router.py bootstrap-start "<project request>"`
-- `python3 .agents/skills/workflow/scripts/workflow_router.py planning-revise "<feedback>"`
-- `python3 .agents/skills/workflow/scripts/workflow_router.py planning-approve`
-- `python3 .agents/skills/workflow/scripts/workflow_router.py execution-start [plan-file]`
-- `python3 .agents/skills/workflow/scripts/workflow_router.py resume`
-- `python3 .agents/skills/workflow/scripts/workflow_router.py status`
-- `python3 .agents/skills/workflow/scripts/workflow_router.py cancel`
+- `python3 scripts/workflow_router.py planning-start "<feature request>"`
+- `python3 scripts/workflow_router.py bootstrap-start "<project request>"`
+- `python3 scripts/workflow_router.py planning-revise "<feedback>"`
+- `python3 scripts/workflow_router.py planning-approve`
+- `python3 scripts/workflow_router.py execution-start [plan-file]`
+- `python3 scripts/workflow_router.py resume`
+- `python3 scripts/workflow_router.py status`
+- `python3 scripts/workflow_router.py cancel`
 
 After running the router, treat its printed context as the canonical workflow instruction for the current phase. Do not ask the user to run setup commands that the router already handled.
-The repo-local wrapper scripts live under `.agents/skills/workflow/scripts/` and operate on `.codex/workflow/*.json` artifacts in the current project.
+The wrapper scripts operate on `.codex/workflow/*.json` artifacts in the current project.
 
 ## Planning
 
@@ -30,12 +30,12 @@ For a new feature request:
 1. Run `planning-start`.
 2. Follow the phase-specific planning contract from the router output.
 3. Keep the work inside `.codex/workflow/` artifacts until the plan is approval-ready.
-4. Advance phases mechanically with `python3 .agents/skills/workflow/scripts/planning_state.py advance [phase]`; do not jump phases by editing `status` in JSON.
+4. Advance phases mechanically with `python3 scripts/planning_state.py advance [phase]`; do not jump phases by editing `status` in JSON.
 5. Use the repo-root memory docs while planning:
    - `PROJECT.md` for product intent and durable constraints
    - `REQUIREMENTS.md` for active backlog, accepted requirements, deferred scope, and milestone commitments
    - `STATE.md` for active initiative, latest decisions, release state, and unresolved risks
-6. Before approval, run `python3 .agents/skills/workflow/scripts/planning_state.py audit-plan`.
+6. Before approval, run `python3 scripts/planning_state.py audit-plan`.
 7. When the plan is ready, use `planning-approve` to transition into execution.
 8. When a step changes durable agent guidance, workflow conventions, or verification rules, set `agents_update_required: true` on that step and include the relevant `agents_paths`.
 
@@ -50,7 +50,7 @@ For plan revisions:
 
 1. Run `planning-revise "<feedback>"`.
 2. Stay in planning. Do not start implementation.
-3. Re-enter the correct phase with `planning_state.py advance <phase>` only after the revised artifacts validate cleanly.
+3. Re-enter the correct phase with `python3 scripts/planning_state.py advance <phase>` only after the revised artifacts validate cleanly.
 
 ## Execution
 
@@ -64,9 +64,9 @@ For an active execution workflow:
    - Record review outcomes inline on `set-step-status ... fix_pending|commit_pending` with `--review-summary`, `--scope-confirmed true|false`, `--verification-status passed|blocked`, `--verification-note` when blocked, repeatable `--agents-checked`, `--agents-updated true|false`, and `--finding-count <n>`.
    - If the current step has `agents_update_required: true`, a passing review must record `--agents-updated true`; stale durable guidance remains a material finding until then.
    - Deployment begins only after UAT moves the workflow to `ship_pending`.
-3. Use `python3 .agents/skills/workflow/scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
-4. If execution enters `execution_escalated`, fix the blocker and clear it with `python3 .agents/skills/workflow/scripts/workflow_state.py resolve-escalation`; that restores the workflow to its pre-escalation phase before normal execution resumes.
-5. Record UAT outcomes with `python3 .agents/skills/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`.
+3. Use `python3 scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.
+4. If execution enters `execution_escalated`, fix the blocker and clear it with `python3 scripts/workflow_state.py resolve-escalation`; that restores the workflow to its pre-escalation phase before normal execution resumes.
+5. Record UAT outcomes with `python3 scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`.
 6. Treat `set-workflow-status complete` as the final ship-only transition. Other manual workflow-status edits require `--override-reason`.
 7. When the workflow reaches `ship_pending`, use `$ship` instead of starting the next unrelated kernel slice.
 
@@ -85,6 +85,7 @@ For direct activation from an approved plan artifact:
 ## Rules
 
 - Treat `$workflow` as the canonical UX. `/workflow` is a legacy hook-based compatibility path.
+- Treat `$lateralus-workflow` as a compatibility alias for users who invoke the plugin by package name.
 - Read `AGENTS.md` before acting on execution steps.
 - Keep planning JSON-first and execution stepwise.
 - Treat `.codex/workflow/metrics/` and `.codex/workflow/uat.json` as auditable local artifacts, not scratch files.
