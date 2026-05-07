@@ -71,6 +71,15 @@ VALID_PLANNING_MODES = {"brownfield", "greenfield"}
 DIRECT_COVERAGE_KEYWORDS = ("compatib", "consumer", "regression", "preserve")
 DEFAULT_TOUCH_BUDGET = 8
 DEFAULT_CREATE_BUDGET = 4
+VALID_CLARIFICATION_STATUSES = {"answered", "defaulted", "deferred"}
+VALID_COMPARISON_BASELINE_AUTHORITIES = {"diagnostic_only", "authoritative"}
+VALID_COMPARISON_CLASSIFICATIONS = {
+    "lesson",
+    "rejected_alternative",
+    "deferred_follow_up",
+    "adopt_now",
+}
+VALID_COMPARISON_MODES = {"none", "dogfood", "user_provided"}
 
 
 def load_planning_state(path: Path = DEFAULT_PLANNING_STATE_PATH) -> dict[str, Any] | None:
@@ -392,6 +401,11 @@ def initialize_planning_artifacts(state: dict[str, Any]) -> None:
     context_payload = {
         "version": 1,
         "feature_request": state["feature_request"],
+        "delivery_contract": {
+            "mode": "one_shot",
+            "comparison_required": False,
+            "basis": "user request, repo context, and bounded clarification",
+        },
         "goal": "",
         "target_user": "",
         "desired_behavior": "",
@@ -400,6 +414,10 @@ def initialize_planning_artifacts(state: dict[str, Any]) -> None:
         "locked_decisions": [],
         "defaults_taken": [],
         "open_questions": [],
+        "clarification_gate": {
+            "material_questions": [],
+            "no_material_questions_reason": "",
+        },
         "constraints": [],
         "success_criteria": [],
         "non_goals": [],
@@ -418,6 +436,12 @@ def initialize_planning_artifacts(state: dict[str, Any]) -> None:
             "pattern_anchors": [],
             "verification_anchors": [],
             "direct_verification_matrix": [],
+            "comparison_diagnostic": {
+                "mode": "none",
+                "source": "",
+                "baseline_authority": "diagnostic_only",
+                "findings": [],
+            },
             "open_questions": [],
             "complexity_events": [],
         },
@@ -743,6 +767,13 @@ def planning_activation_prompt(state: dict[str, Any], *, revision_mode: bool = F
         "- `$workflow <feature request>` starts with discuss automatically; do not skip discuss.\n"
         "- Root `AGENTS.md` must be read before scoped discovery, then load only the relevant `AGENTS.md` files.\n"
         "- Ask at most 3 clarification questions, only when ambiguity would materially change architecture, scope, or verification.\n"
+        "- Ask product-impacting clarification questions one at a time with a recommended answer; otherwise record "
+        "`context.clarification_gate.no_material_questions_reason`.\n"
+        "- Treat greenfield/bootstrap delivery as one-shot by default: satisfy the user's stated need from the request, "
+        "repo context, and bounded clarification.\n"
+        "- Comparison artifacts are optional diagnostics, not required planning inputs; record them in "
+        "`current.comparison_diagnostic` only when the user provides a baseline or maintainers are dogfooding.\n"
+        "- Do not classify a comparison finding as `adopt_now` unless the user made that baseline authoritative.\n"
         "- Distinguish facts from assumptions explicitly.\n"
         "- Do not let a single planner own the final truth; convergence must merge discuss, discovery, architecture, full-plan coverage, MVP pressure, and skeptic findings.\n"
         "- Planning may update `PROJECT.md` only when product intent or durable constraints change.\n"
@@ -876,7 +907,8 @@ def audit_plan_bundle(
     requirements_memory: dict[str, list[str]] | None = None,
     state_memory: dict[str, list[str]] | None = None,
 ) -> list[str]:
-    issues = audit_plan_against_discovery(plan_spec, discovery)
+    issues = _audit_discovery_dossier(discovery)
+    issues.extend(audit_plan_against_discovery(plan_spec, discovery))
     issues.extend(_audit_context_artifact(context))
     issues.extend(_audit_scope_contract(scope_contract))
     issues.extend(_audit_architecture_constraints(architecture_constraints))
@@ -955,7 +987,9 @@ def audit_plan_against_discovery(plan_spec: dict[str, Any], discovery: dict[str,
 
 
 def _audit_context_artifact(context: dict[str, Any]) -> list[str]:
+    context = _normalize_context_contract_compat(context)
     issues: list[str] = []
+    issues.extend(_validate_delivery_contract(context))
     if not _artifact_non_empty_string(context.get("goal")):
         issues.append("context artifact is missing a goal")
     if not _artifact_non_empty_string(context.get("desired_behavior")):
@@ -964,7 +998,15 @@ def _audit_context_artifact(context: dict[str, Any]) -> list[str]:
         issues.append("context artifact must include at least one success_criteria entry")
     if context.get("open_questions"):
         issues.append("context artifact still has unresolved open_questions")
+    issues.extend(_validate_clarification_gate(context))
     return issues
+
+
+def _audit_discovery_dossier(discovery: dict[str, Any]) -> list[str]:
+    current = discovery.get("current")
+    if not isinstance(current, dict):
+        return ["discovery dossier missing current section"]
+    return _validate_comparison_diagnostic(current.get("comparison_diagnostic"))
 
 
 def _audit_scope_contract(scope_contract: dict[str, Any]) -> list[str]:
@@ -1811,14 +1853,14 @@ def _planning_phase_contract(state: dict[str, Any], *, phase_name: str) -> str:
             return (
                 "Current phase contract:\n"
                 "- Inputs: project request plus `PROJECT.md`, `REQUIREMENTS.md`, and `STATE.md`.\n"
-                "- Output: `context.json` with product intent, target users, desired behavior, scope boundaries, defaults, non-goals, and baseline success criteria.\n"
+                "- Output: `context.json` with product intent, one-shot `delivery_contract`, target users, desired behavior, clarification gate, scope boundaries, defaults, non-goals, and baseline success criteria.\n"
                 "- Allowed work: establish greenfield intent and baseline goals only; do not start architecture or plan drafting yet.\n"
                 f"- When discuss outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance discovery`.\n"
             )
         return (
             "Current phase contract:\n"
             "- Inputs: feature request plus `PROJECT.md`, `REQUIREMENTS.md`, and `STATE.md`.\n"
-            "- Output: `context.json` with goal, target user, desired behavior, defaults, non-goals, and success criteria.\n"
+            "- Output: `context.json` with goal, one-shot `delivery_contract`, target user, desired behavior, clarification gate, defaults, non-goals, and success criteria.\n"
             "- Allowed work: clarify intent and durable constraints only; do not start discovery or plan drafting yet.\n"
             f"- When discuss outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance discovery`.\n"
         )
@@ -1827,14 +1869,14 @@ def _planning_phase_contract(state: dict[str, Any], *, phase_name: str) -> str:
             return (
                 "Current phase contract:\n"
                 "- Inputs: validated `context.json` plus the repo memory docs.\n"
-                "- Output: `discovery_dossier.json` with initial requirements, greenfield constraints, assumptions, baseline verification anchors, and open questions.\n"
-                "- Allowed work: describe greenfield constraints and initial assumptions; do not map a fake brownfield blast radius.\n"
+                "- Output: `discovery_dossier.json` with initial requirements, greenfield constraints, assumptions, baseline verification anchors, optional `comparison_diagnostic`, and open questions.\n"
+                "- Allowed work: describe greenfield constraints and initial assumptions; do not map a fake brownfield blast radius or require a comparison artifact.\n"
                 f"- When discovery outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance architecture_audit`.\n"
             )
         return (
             "Current phase contract:\n"
             "- Inputs: validated `context.json` plus the repo memory docs.\n"
-            "- Output: `discovery_dossier.json` with requirements, entry points, blast radius, pattern anchors, verification anchors, optional `direct_verification_matrix`, and open questions.\n"
+            "- Output: `discovery_dossier.json` with requirements, entry points, blast radius, pattern anchors, verification anchors, optional `direct_verification_matrix`, optional `comparison_diagnostic`, and open questions.\n"
             "- Allowed work: collect facts and codebase anchors only; do not lock architecture or author the implementation plan yet.\n"
             f"- When discovery outputs validate, run `{PLANNING_STATE_TOOL_COMMAND} advance architecture_audit`.\n"
         )
@@ -1916,7 +1958,10 @@ def _planning_phase_contract(state: dict[str, Any], *, phase_name: str) -> str:
 
 def _validate_discuss_phase(state: dict[str, Any]) -> list[str]:
     issues: list[str] = []
-    context = _load_required_artifact(resolve_repo_path(state["context_path"]), "context artifact")
+    context = _normalize_context_contract_compat(
+        _load_required_artifact(resolve_repo_path(state["context_path"]), "context artifact")
+    )
+    issues.extend(_validate_delivery_contract(context))
     if not _artifact_non_empty_string(context.get("goal")):
         issues.append("discuss phase requires context.goal")
     if not _artifact_non_empty_string(context.get("target_user")):
@@ -1925,6 +1970,7 @@ def _validate_discuss_phase(state: dict[str, Any]) -> list[str]:
         issues.append("discuss phase requires context.desired_behavior")
     if not _artifact_string_list(context.get("success_criteria")):
         issues.append("discuss phase requires at least one context.success_criteria entry")
+    issues.extend(_validate_clarification_gate(context))
     issues.extend(
         _memory_section_issues(
             _load_memory_document(resolve_repo_path(state["project_memory_path"]), "project memory"),
@@ -1963,6 +2009,7 @@ def _validate_discovery_phase(state: dict[str, Any]) -> list[str]:
         )
     except ValueError as exc:
         return issues + [str(exc)]
+    issues.extend(_validate_comparison_diagnostic(current.get("comparison_diagnostic")))
     if not _artifact_string_list(current.get("requirements")):
         issues.append("discovery phase requires current.requirements")
     if not _artifact_string_list(current.get("success_criteria")):
@@ -2124,6 +2171,152 @@ def _validate_bootstrap_expectations(path: Path) -> list[str]:
         issues.append(
             "greenfield convergence phase requires deployment_release_baseline_expectations"
         )
+    return issues
+
+
+def _normalize_context_contract_compat(context: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(context)
+    normalized.setdefault(
+        "delivery_contract",
+        {
+            "mode": "one_shot",
+            "comparison_required": False,
+            "basis": "legacy context artifact predates delivery_contract; defaulted to one-shot planning",
+        },
+    )
+    normalized.setdefault(
+        "clarification_gate",
+        {
+            "material_questions": [],
+            "no_material_questions_reason": (
+                "legacy context artifact predates clarification_gate; no material question was recorded"
+            ),
+        },
+    )
+    return normalized
+
+
+def _validate_delivery_contract(context: dict[str, Any]) -> list[str]:
+    delivery_contract = context.get("delivery_contract")
+    if not isinstance(delivery_contract, dict):
+        return ["context.delivery_contract is required"]
+
+    issues: list[str] = []
+    mode = delivery_contract.get("mode")
+    if mode != "one_shot":
+        issues.append("context.delivery_contract.mode must be one_shot")
+
+    if delivery_contract.get("comparison_required") is not False:
+        issues.append("context.delivery_contract.comparison_required must be false")
+
+    if not _artifact_non_empty_string(delivery_contract.get("basis")):
+        issues.append("context.delivery_contract.basis is required")
+    return issues
+
+
+def _validate_clarification_gate(context: dict[str, Any]) -> list[str]:
+    clarification_gate = context.get("clarification_gate")
+    if not isinstance(clarification_gate, dict):
+        return ["context.clarification_gate is required"]
+
+    issues: list[str] = []
+    material_questions = clarification_gate.get("material_questions")
+    if not isinstance(material_questions, list):
+        return ["context.clarification_gate.material_questions must be a list"]
+
+    if context.get("open_questions"):
+        issues.append("context.open_questions must be resolved through clarification_gate before phase advance")
+
+    if not material_questions:
+        if not _artifact_non_empty_string(clarification_gate.get("no_material_questions_reason")):
+            issues.append(
+                "context.clarification_gate requires no_material_questions_reason when no material questions were needed"
+            )
+        return issues
+
+    for index, item in enumerate(material_questions, start=1):
+        if not isinstance(item, dict):
+            issues.append(f"context.clarification_gate.material_questions[{index}] must be an object")
+            continue
+
+        if not _artifact_non_empty_string(item.get("question")):
+            issues.append(f"context.clarification_gate.material_questions[{index}].question is required")
+        if not _artifact_non_empty_string(item.get("recommended_answer")):
+            issues.append(
+                f"context.clarification_gate.material_questions[{index}].recommended_answer is required"
+            )
+
+        status = item.get("status")
+        if status not in VALID_CLARIFICATION_STATUSES:
+            allowed = ", ".join(sorted(VALID_CLARIFICATION_STATUSES))
+            issues.append(
+                f"context.clarification_gate.material_questions[{index}].status must be one of: {allowed}"
+            )
+            continue
+
+        if status in {"answered", "defaulted"} and not _artifact_non_empty_string(item.get("resolution")):
+            issues.append(
+                f"context.clarification_gate.material_questions[{index}].resolution is required for {status} questions"
+            )
+        if status == "deferred" and not _artifact_non_empty_string(item.get("deferred_reason")):
+            issues.append(
+                f"context.clarification_gate.material_questions[{index}].deferred_reason is required for deferred questions"
+            )
+    return issues
+
+
+def _validate_comparison_diagnostic(value: Any) -> list[str]:
+    if value in (None, {}):
+        return []
+    if not isinstance(value, dict):
+        return ["discovery current.comparison_diagnostic must be an object"]
+
+    issues: list[str] = []
+    mode = value.get("mode", "none")
+    if mode not in VALID_COMPARISON_MODES:
+        allowed = ", ".join(sorted(VALID_COMPARISON_MODES))
+        issues.append(f"discovery current.comparison_diagnostic.mode must be one of: {allowed}")
+
+    baseline_authority = value.get("baseline_authority", "diagnostic_only")
+    if baseline_authority not in VALID_COMPARISON_BASELINE_AUTHORITIES:
+        allowed = ", ".join(sorted(VALID_COMPARISON_BASELINE_AUTHORITIES))
+        issues.append(
+            f"discovery current.comparison_diagnostic.baseline_authority must be one of: {allowed}"
+        )
+
+    source = value.get("source", "")
+    findings = value.get("findings", [])
+    if not isinstance(findings, list):
+        return issues + ["discovery current.comparison_diagnostic.findings must be a list"]
+
+    if mode != "none":
+        if not _artifact_non_empty_string(source):
+            issues.append("discovery current.comparison_diagnostic.source is required when mode is active")
+        if not findings:
+            issues.append("discovery current.comparison_diagnostic.findings is required when mode is active")
+    elif findings:
+        issues.append("discovery current.comparison_diagnostic.findings requires mode dogfood or user_provided")
+
+    for index, finding in enumerate(findings, start=1):
+        if not isinstance(finding, dict):
+            issues.append(f"discovery current.comparison_diagnostic.findings[{index}] must be an object")
+            continue
+
+        classification = finding.get("classification")
+        if classification not in VALID_COMPARISON_CLASSIFICATIONS:
+            allowed = ", ".join(sorted(VALID_COMPARISON_CLASSIFICATIONS))
+            issues.append(
+                f"discovery current.comparison_diagnostic.findings[{index}].classification must be one of: {allowed}"
+            )
+        elif classification == "adopt_now" and baseline_authority != "authoritative":
+            issues.append(
+                "discovery current.comparison_diagnostic adopt_now findings require baseline_authority=authoritative"
+            )
+
+        if not _artifact_non_empty_string(finding.get("summary")):
+            issues.append(f"discovery current.comparison_diagnostic.findings[{index}].summary is required")
+        if not _artifact_non_empty_string(finding.get("rationale")):
+            issues.append(f"discovery current.comparison_diagnostic.findings[{index}].rationale is required")
     return issues
 
 

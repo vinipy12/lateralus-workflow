@@ -27,6 +27,12 @@
         ]
       }
     ],
+    "comparison_diagnostic": {
+      "mode": "none",
+      "source": "",
+      "baseline_authority": "diagnostic_only",
+      "findings": []
+    },
     "open_questions": [],
     "complexity_events": []
   },

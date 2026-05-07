@@ -2,9 +2,9 @@
 
 ## Current Repo State
 
-- Current development branch is `stage`.
+- Current checkout branch is `main`.
 - `python3 .codex/workflow/scripts/workflow_router.py status` reports no active workflow state.
-- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `107` tests.
+- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `126` tests.
 - `execution-start` now honors custom `--planning-state-path` and `--execution-state-path` pairs, so custom-path workflows get the same planning/execution guardrails as the default path.
 - Planning audits now support `current.direct_verification_matrix`, and the repo no longer relies on placeholder consumer-path test files to prove direct-consumer coverage.
 - Focused regression coverage now includes `tests/scripts/test_workflow_router_cli.py`, `tests/scripts/test_planning_audit.py`, `tests/scripts/test_review_uat_workflow.py`, and `tests/scripts/test_telemetry_contract.py` alongside a slimmer `tests/scripts/test_codex_workflow.py`.
@@ -18,6 +18,35 @@
   Broader CI and quality-gate stewardship remains a future capability.
 - Packaging hardening is now started for Milestone 3:
   `$lateralus-workflow` is a package-name alias for `$workflow`, skill instructions no longer assume the target repo has `.agents/skills/`, and `scripts/lateralus_plugin.py` manages the personal Codex checkout plus installed cache updates.
+- Latest dogfood evidence comes from `/home/vinipy/Lateralus/lateralus-legal-intake-ai`.
+  The workflow branch reached a complete, PR-opened MVP, and comparison against `main` helped diagnose planning gaps during development.
+  That comparison is dogfood evidence, not the normal user-facing workflow contract.
+- Planning convergence controls are now landed for the latest kernel slice:
+  `context.delivery_contract` keeps greenfield/bootstrap work one-shot by default, `context.clarification_gate` records product-impacting clarification decisions before phase advance, and `current.comparison_diagnostic` keeps dogfood/user-provided comparison findings diagnostic unless the user made the baseline authoritative.
+
+## Product-Direction Lessons From Dogfood
+
+- The legal-intake MVP comparison is the clearest current steering signal.
+  The workflow branch became the better portfolio artifact after all steps finished: it produced a focused vertical slice, cleaner domain/API/persistence/AI boundaries, a polished dashboard, validation evidence, local docs, UAT script, and a grounded PR.
+- In this dogfood run, `main` existed as a comparable artifact rather than as the product source of truth.
+  Its differences still exposed tradeoffs worth noticing:
+  an analyze-only intake endpoint, backend-driven option metadata, broader case taxonomy, dynamic demo follow-up dates, and SQLite indexes.
+  The right direction is not to preserve `main`; it is to teach planning and convergence to use comparable artifacts as evidence, then explicitly classify each observed difference as a useful lesson, rejected alternative, or deferred follow-up.
+- Comparable artifacts are optional development inputs.
+  Once the workflow is ready for real use, most greenfield requests will not have a preexisting "other version" to compare against.
+  The default product contract is still one-shot delivery from the user's stated need, repository context, and required clarification gates.
+- Plan phase did not behave like the intended small `$grill-me`.
+  It recorded open product questions around UI language and case taxonomy, then defaulted them instead of asking the user.
+  Product-impacting ambiguities should trigger one-at-a-time clarification with a recommended answer, or an explicit `no_material_questions_reason` when the planner chooses not to ask.
+- The dogfood run exposed a state-memory reconciliation gap.
+  The machine state reached `complete`, UAT passed, and the PR opened, but the human-readable `STATE.md` still said "Execution in progress."
+  Ship cannot be considered clean if repo-memory state and workflow JSON disagree.
+- The step-4 and step-5 escalations were useful, not noise.
+  They showed that validation steps naturally verify outside their narrow file ownership.
+  Planning should model final validation as explicit cross-step ownership instead of making later execution clear ownership-mismatch escalations manually.
+- Product direction should stay one-shot first.
+  During dogfood or explicit user evaluation, comparison can help diagnose whether the workflow missed obvious tradeoffs.
+  In normal operation, the workflow should not require or search for a comparable artifact before producing a plan.
 
 ## Distance To Production Ready
 
@@ -69,19 +98,33 @@
 2. Continue-or-escalate behavior is now explicit in router and execution state transitions through `execution_escalated`.
 3. Telemetry now records deterministic sensor failures, escalation categories, escalation clear events, and repeated review/UAT loops in the scorecard.
 
+#### Planning Convergence Controls: Landed
+
+1. Greenfield/bootstrap planning now records a one-shot `delivery_contract` in `context.json`, with comparison artifacts explicitly not required.
+2. Discovery can record optional `comparison_diagnostic` evidence from dogfood or user-provided baselines, but `adopt_now` is blocked unless the baseline is authoritative.
+3. Discuss-phase validation now requires product-impacting ambiguity to flow through `clarification_gate` with a recommended answer and resolution, or a durable reason that no material question was needed.
+
 #### Next Coding Slice
 
-1. Keep shrinking `tests/scripts/test_codex_workflow.py` where narrow kernel contracts are still mixed into integration coverage.
-2. Continue tightening the review loop against `code_review.md`.
+1. Add ship-time repo-memory reconciliation.
+   `STATE.md`, workflow JSON state, UAT status, metrics, and PR handoff should agree before `workflow_status=complete`; mismatches should block ship or enter a structured reconciliation path.
+2. Make final validation ownership explicit.
+   Steps whose purpose is validation, docs, UAT, or release alignment should be allowed to verify cross-step targets when the approved plan declares that ownership.
+3. Keep shrinking `tests/scripts/test_codex_workflow.py` where narrow kernel contracts are still mixed into integration coverage.
+4. Continue tightening the review loop against `code_review.md`.
    The `agents_update_required` stale-guidance check is now mechanical; remaining work should focus on any review pass checks that are still prompt-only.
-3. Harden planning convergence and bootstrap contracts after the control slice above if they still represent the highest residual kernel risk.
-4. Verify telemetry as a contract beyond the execution slice where needed, now that repeated failure and escalation categories are part of the harness contract.
-5. Keep PR stewardship out of the implementation slice until the kernel can reliably reach `ship_pending` and produce grounded PRs.
+5. Harden planning convergence and bootstrap contracts further if they still represent the highest residual kernel risk after more dogfood runs.
+6. Verify telemetry as a contract beyond the execution slice where needed, now that repeated failure and escalation categories are part of the harness contract.
+7. Keep full PR-stewardship state-machine work out of the next implementation slice until the kernel can reliably reach `ship_pending` and produce grounded PRs.
+   The current `$ship` guidance can keep lightweight Codex-review babysitting, but persisted PR lifecycle states should wait.
 
 ### Milestone 2: Audit Completeness
 
 - Expand explicit consumer verification matrices beyond the first migrated compatibility-plan cases.
   Move more compatibility coverage onto discovery-driven direct verification mappings and keep filesystem inference only as a compatibility fallback.
+- Add optional comparative product-direction evidence to approval audits.
+  Greenfield plans should be internally coherent without any comparison artifact.
+  When a user-provided comparison branch, existing draft, or prior implementation exists, the audit should show what was learned from it without treating it as scope authority unless the user explicitly says it is.
 - Make approval audits fully explicit about why a plan passes or fails.
   Reduce reliance on prompt interpretation and ensure the main planning audits are understandable, reproducible, and test-backed.
 - Close remaining brownfield and greenfield audit gaps.
@@ -101,7 +144,7 @@
 ### Milestone 4: PR Stewardship
 
 - Add a post-ship PR lifecycle phase after the current kernel and packaging milestones are stable.
-  The current `$ship` behavior remains branch push, PR creation, optional review request, and workflow completion until this phase exists explicitly.
+  The current `$ship` behavior remains branch push, PR creation, optional review request, lightweight Codex-review babysitting, and workflow completion until this phase exists explicitly.
 - Introduce a PR steward state machine:
   `pr_opened`, `pr_stewardship_active`, `pr_fixing`, `pr_review_requested`, `merge_ready`, and `pr_stewardship_escalated`.
 - Prefer GitHub MCP for PR metadata, comments, review threads, status checks, and review requests.

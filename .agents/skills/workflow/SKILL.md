@@ -35,16 +35,20 @@ For a new feature request:
    - `PROJECT.md` for product intent and durable constraints
    - `REQUIREMENTS.md` for active backlog, accepted requirements, deferred scope, and milestone commitments
    - `STATE.md` for active initiative, latest decisions, release state, and unresolved risks
-6. Before approval, run `python3 scripts/planning_state.py audit-plan`.
-7. When the plan is ready, use `planning-approve` to transition into execution.
-8. When a step changes durable agent guidance, workflow conventions, or verification rules, set `agents_update_required: true` on that step and include the relevant `agents_paths`.
+6. In `context.json`, keep `delivery_contract.mode` set to `one_shot` and `comparison_required` set to `false`; the normal contract is to satisfy the user's stated need from the request, repo context, and bounded clarification.
+7. Use `clarification_gate` for product-impacting ambiguity: ask one question at a time with a recommended answer, then record the resolution, or record `no_material_questions_reason` when no material question is needed.
+8. Before approval, run `python3 scripts/planning_state.py audit-plan`.
+9. When the plan is ready, use `planning-approve` to transition into execution.
+10. When a step changes durable agent guidance, workflow conventions, or verification rules, set `agents_update_required: true` on that step and include the relevant `agents_paths`.
 
 For greenfield/bootstrap work:
 
 1. Run `bootstrap-start "<project request>"`.
 2. Stay on the same planning phases, but produce `stack_runtime_decision.json` during `architecture_audit`.
 3. Produce `bootstrap_expectations.json` before `approval_ready`.
-4. Keep the bootstrap plan JSON-first and auditable like the brownfield path.
+4. Do not require a comparable artifact for greenfield work. When the user provides one, or maintainers are dogfooding, record it as `current.comparison_diagnostic` with findings classified as `lesson`, `rejected_alternative`, `deferred_follow_up`, or `adopt_now`.
+5. Use `adopt_now` only when the user made the baseline authoritative; otherwise comparison findings stay diagnostic.
+6. Keep the bootstrap plan JSON-first and auditable like the brownfield path.
 
 For plan revisions:
 
