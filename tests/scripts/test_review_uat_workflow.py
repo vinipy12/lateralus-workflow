@@ -1132,6 +1132,49 @@ def test_workflow_state_shipped_rejects_state_memory_directory_without_traceback
     assert persisted_state["ship_record"] is None
 
 
+def test_workflow_state_shipped_rejects_metrics_directory_without_traceback():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state_memory_path = Path(tmpdir) / "STATE.md"
+        state_memory_path.write_text(
+            "# State\n\n## Workflow Status\n- PR opened and ready for workflow completion.\n",
+            encoding="utf-8",
+        )
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["workflow_status"] = "ship_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        save_example_uat_artifact(
+            workflow_lib,
+            state,
+            state_memory_path=str(state_memory_path),
+        )
+        workflow_lib.update_uat_artifact_result(
+            Path(state["uat_artifact_path"]),
+            "passed",
+            "UAT was marked passed before metrics-log corruption.",
+        )
+        events_path = Path(state["metrics_dir"]) / "events.jsonl"
+        events_path.mkdir(parents=True)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "shipped",
+            *_ship_args(),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode != 0
+    assert "metrics event log could not be read" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert persisted_state["steps"][0]["status"] == "committed"
+    assert persisted_state["ship_record"] is None
+
+
 def test_next_stop_decision_requires_handoff_reconciliation_after_shipped_step():
     workflow_lib = load_workflow_lib()
     state = workflow_lib.build_state_from_plan_spec(example_plan(), plan_path="PLANS.md")

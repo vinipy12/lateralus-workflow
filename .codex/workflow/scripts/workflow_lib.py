@@ -609,6 +609,8 @@ def _uat_passed_reconciliation_issues(
             issues.append("metrics are missing a uat_passed event for this workflow and step")
     except ValueError as exc:
         issues.append(f"metrics event log is invalid: {exc}")
+    except OSError as exc:
+        issues.append(f"metrics event log could not be read: {exc}")
     return issues
 
 
