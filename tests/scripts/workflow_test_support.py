@@ -295,15 +295,23 @@ def rebase_execution_state_paths(state: dict, tmpdir: str) -> dict:
     return rebased
 
 
-def save_example_uat_artifact(workflow_lib, state: dict, *, plan_spec: dict | None = None) -> None:
+def save_example_uat_artifact(
+    workflow_lib,
+    state: dict,
+    *,
+    plan_spec: dict | None = None,
+    project_memory_path: str = "PROJECT.md",
+    requirements_memory_path: str = "REQUIREMENTS.md",
+    state_memory_path: str = "STATE.md",
+) -> None:
     workflow_lib.save_uat_artifact(
         workflow_lib.build_uat_artifact(
             plan_spec or example_plan(),
             workflow_name=state["workflow_name"],
             plan_path=state["plan_path"],
-            project_memory_path="PROJECT.md",
-            requirements_memory_path="REQUIREMENTS.md",
-            state_memory_path="STATE.md",
+            project_memory_path=project_memory_path,
+            requirements_memory_path=requirements_memory_path,
+            state_memory_path=state_memory_path,
         ),
         Path(state["uat_artifact_path"]),
     )

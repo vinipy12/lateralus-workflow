@@ -12,6 +12,7 @@
 - The current ship boundary remains branch push, grounded PR creation, optional review request, and workflow completion.
 - A completed slice that is large enough to justify a PR should be pushed and opened as a grounded pull request before starting the next unrelated kernel slice.
 - After opening the PR, the agent must report that it is ready for the user to manually babysit reviewer comments and coding-change suggestions.
+- Workflow completion requires a recorded ship handoff that reconciles the PR URL, Codex review outcome, passed UAT, metrics, and current `STATE.md` digest.
 
 ## Deferred Scope
 - Packaging and distribution revisit.

@@ -37,8 +37,8 @@ Use the bundled `scripts/workflow_state.py` wrapper when you need to update work
    - If Codex review stalls, fails, or needs a product decision, stop and report the exact blocker.
 9. Mark the workflow complete after Codex review is clean, or immediately if Codex review was not requested:
    - Deployment scope here is branch push, PR creation, requested Codex review babysitting, and workflow completion only.
-   - Update `STATE.md` if shipping changed release state, latest decisions, or unresolved risks.
-   - `python3 scripts/workflow_state.py set-step-status <current-step-id> shipped`
+   - Update or verify `STATE.md` so the current delivery record matches the PR, UAT outcome, and final review status.
+   - `python3 scripts/workflow_state.py set-step-status <current-step-id> shipped --branch <branch> --pr-url <url> --codex-review-status <clean|not_requested> --state-memory-status <updated|verified> --state-memory-summary "<how STATE.md matches the shipped PR>"`
    - `python3 scripts/workflow_state.py set-workflow-status complete`
 
 ## Rules
@@ -52,6 +52,7 @@ Use the bundled `scripts/workflow_state.py` wrapper when you need to update work
 - If push or PR creation fails, stop and report the exact blocker instead of guessing.
 - Do not use this skill before the workflow reaches `ship_pending`.
 - Do not ship if the workflow state still indicates an earlier step is uncommitted.
+- Do not run `set-workflow-status complete` until the ship handoff is recorded; completion validates the PR URL, UAT artifact, metrics, and current `STATE.md` digest.
 - Do not continue into new kernel work after opening a PR for a PR-sized slice; finish the requested Codex review babysitting loop first.
 
 ## GitHub

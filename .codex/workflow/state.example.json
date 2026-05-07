@@ -10,6 +10,7 @@
   "current_step_id": "step-1",
   "base_branch": "origin/main",
   "request_codex_review": true,
+  "ship_record": null,
   "uat_artifact_path": ".codex/workflow/uat.json",
   "metrics_dir": ".codex/workflow/metrics",
   "steps": [
