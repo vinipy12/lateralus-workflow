@@ -23,6 +23,8 @@
   That comparison is dogfood evidence, not the normal user-facing workflow contract.
 - Planning convergence controls are now landed for the latest kernel slice:
   `context.delivery_contract` keeps greenfield/bootstrap work one-shot by default, `context.clarification_gate` records product-impacting clarification decisions before phase advance, and `current.comparison_diagnostic` keeps dogfood/user-provided comparison findings diagnostic unless the user made the baseline authoritative.
+- Ship-time repo-memory reconciliation is now landed for the latest kernel slice:
+  `set-step-status ... shipped` records the PR handoff, Codex review status, and `STATE.md` reconciliation digest; `set-workflow-status complete` blocks if UAT, metrics, PR details, or `STATE.md` no longer match.
 
 ## Product-Direction Lessons From Dogfood
 
@@ -106,16 +108,22 @@
 
 #### Next Coding Slice
 
-1. Add ship-time repo-memory reconciliation.
-   `STATE.md`, workflow JSON state, UAT status, metrics, and PR handoff should agree before `workflow_status=complete`; mismatches should block ship or enter a structured reconciliation path.
-2. Make final validation ownership explicit.
+#### Ship-Time Repo-Memory Reconciliation: Landed
+
+1. `set-step-status ... shipped` records branch, PR URL, Codex review status, repo-memory action, `STATE.md` summary, and the current `STATE.md` digest.
+2. `set-workflow-status complete` validates workflow JSON state, passed UAT, `uat_passed` metrics, PR handoff details, and `STATE.md` digest before closing the workflow.
+3. `$ship` guidance now requires the handoff arguments and treats completion failures as reconciliation blockers.
+
+#### Remaining Slice Candidates
+
+1. Make final validation ownership explicit.
    Steps whose purpose is validation, docs, UAT, or release alignment should be allowed to verify cross-step targets when the approved plan declares that ownership.
-3. Keep shrinking `tests/scripts/test_codex_workflow.py` where narrow kernel contracts are still mixed into integration coverage.
-4. Continue tightening the review loop against `code_review.md`.
+2. Keep shrinking `tests/scripts/test_codex_workflow.py` where narrow kernel contracts are still mixed into integration coverage.
+3. Continue tightening the review loop against `code_review.md`.
    The `agents_update_required` stale-guidance check is now mechanical; remaining work should focus on any review pass checks that are still prompt-only.
-5. Harden planning convergence and bootstrap contracts further if they still represent the highest residual kernel risk after more dogfood runs.
-6. Verify telemetry as a contract beyond the execution slice where needed, now that repeated failure and escalation categories are part of the harness contract.
-7. Keep full PR-stewardship state-machine work out of the next implementation slice until the kernel can reliably reach `ship_pending` and produce grounded PRs.
+4. Harden planning convergence and bootstrap contracts further if they still represent the highest residual kernel risk after more dogfood runs.
+5. Verify telemetry as a contract beyond the execution slice where needed, now that repeated failure and escalation categories are part of the harness contract.
+6. Keep full PR-stewardship state-machine work out of the next implementation slice until the kernel can reliably reach `ship_pending` and produce grounded PRs.
    The current `$ship` guidance can keep lightweight Codex-review babysitting, but persisted PR lifecycle states should wait.
 
 ### Milestone 2: Audit Completeness

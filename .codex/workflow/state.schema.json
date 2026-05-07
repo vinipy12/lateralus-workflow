@@ -142,6 +142,93 @@
     "request_codex_review": {
       "type": "boolean"
     },
+    "ship_record": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "workflow_name",
+        "step_id",
+        "branch",
+        "pr_url",
+        "codex_review_status",
+        "state_memory_status",
+        "state_memory_path",
+        "state_memory_sha256",
+        "state_memory_summary",
+        "uat_artifact_path",
+        "uat_status",
+        "metrics_dir",
+        "recorded_at"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 1
+        },
+        "workflow_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "step_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pr_url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "codex_review_status": {
+          "type": "string",
+          "enum": [
+            "clean",
+            "not_requested"
+          ]
+        },
+        "state_memory_status": {
+          "type": "string",
+          "enum": [
+            "updated",
+            "verified"
+          ]
+        },
+        "state_memory_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state_memory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "state_memory_summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uat_artifact_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uat_status": {
+          "type": "string",
+          "const": "passed"
+        },
+        "metrics_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recorded_at": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "uat_artifact_path": {
       "type": "string",
       "minLength": 1

@@ -10,9 +10,12 @@ from metrics_lib import append_metrics_event, load_metrics_events
 from workflow_lib import (
     DEFAULT_STATE_PATH,
     VALID_REVIEW_VERIFICATION_STATUSES,
+    VALID_SHIP_CODEX_REVIEW_STATUSES,
+    VALID_SHIP_STATE_MEMORY_STATUSES,
     VALID_STEP_STATUSES,
     VALID_WORKFLOW_STATUSES,
     build_review_record_for_status,
+    build_ship_record,
     canonical_review_summary,
     clear_execution_escalation,
     current_step,
@@ -22,6 +25,7 @@ from workflow_lib import (
     find_execution_blocker,
     load_state,
     save_state,
+    ship_completion_reconciliation_issues,
     update_uat_artifact_result,
     validate_state,
 )
@@ -56,6 +60,19 @@ def main() -> int:
     step_parser.add_argument("--agents-updated", choices=("true", "false"), default=None)
     step_parser.add_argument("--finding-count", type=int, default=None)
     step_parser.add_argument("--override-reason", default=None)
+    step_parser.add_argument("--branch", default=None)
+    step_parser.add_argument("--pr-url", default=None)
+    step_parser.add_argument(
+        "--codex-review-status",
+        choices=sorted(VALID_SHIP_CODEX_REVIEW_STATUSES),
+        default=None,
+    )
+    step_parser.add_argument(
+        "--state-memory-status",
+        choices=sorted(VALID_SHIP_STATE_MEMORY_STATUSES),
+        default=None,
+    )
+    step_parser.add_argument("--state-memory-summary", default=None)
     step_parser.add_argument("--path", type=Path, default=DEFAULT_STATE_PATH)
 
     current_parser = subparsers.add_parser("set-current-step", help="Point current_step_id at a new step.")
@@ -131,7 +148,23 @@ def main() -> int:
         if review_errors:
             raise SystemExit(_render_review_validation_errors(args.status, review_errors))
         _validate_step_status_change(state, step, new_status=args.status)
+        ship_record = None
+        if args.status == "shipped":
+            try:
+                ship_record = build_ship_record(
+                    state,
+                    step,
+                    branch=args.branch,
+                    pr_url=args.pr_url,
+                    codex_review_status=args.codex_review_status,
+                    state_memory_status=args.state_memory_status,
+                    state_memory_summary=args.state_memory_summary,
+                )
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
         step["status"] = args.status
+        if ship_record is not None:
+            state["ship_record"] = ship_record
         if review_record is not None:
             step["review_record"] = review_record
             step["review_summary"] = review_record["summary"]
@@ -181,6 +214,7 @@ def main() -> int:
                 state["escalation"] = None
         save_state(state, args.path)
         if args.status == "complete":
+            ship_record = state.get("ship_record") if isinstance(state.get("ship_record"), dict) else {}
             append_metrics_event(
                 state["metrics_dir"],
                 "workflow_shipped",
@@ -188,6 +222,10 @@ def main() -> int:
                     "workflow_name": state["workflow_name"],
                     "workflow_status": args.status,
                     "current_step_id": state["current_step_id"],
+                    "branch": ship_record.get("branch"),
+                    "pr_url": ship_record.get("pr_url"),
+                    "codex_review_status": ship_record.get("codex_review_status"),
+                    "state_memory_status": ship_record.get("state_memory_status"),
                 },
             )
         if previous_status != "execution_escalated" and state["workflow_status"] == "execution_escalated":
@@ -314,9 +352,9 @@ def _validate_step_status_change(state: dict, step: dict, *, new_status: str) ->
         raise SystemExit(
             f"set-step-status shipped requires workflow_status ship_pending, got {state['workflow_status']}"
         )
-    if step["status"] != "committed":
+    if step["status"] not in {"committed", "shipped"}:
         raise SystemExit(
-            f"set-step-status shipped requires the current step to be committed, got {step['status']}"
+            f"set-step-status shipped requires the current step to be committed or already shipped, got {step['status']}"
         )
 
 
@@ -342,6 +380,9 @@ def _validate_workflow_status_change(
             raise SystemExit(
                 f"set-workflow-status complete requires the current step to be shipped, got {step['status']}"
             )
+        reconciliation_issues = ship_completion_reconciliation_issues(state, step=step)
+        if reconciliation_issues:
+            raise SystemExit(_render_ship_reconciliation_errors(reconciliation_issues))
         return
 
     if override_reason is None:
@@ -482,6 +523,13 @@ def _render_sensor_failure_message(failures: list[dict]) -> str:
 
 def _render_review_validation_errors(status: str, errors: list[str]) -> str:
     lines = [f"set-step-status {status} rejected:"]
+    for error in errors:
+        lines.append(f"- {error}")
+    return "\n".join(lines)
+
+
+def _render_ship_reconciliation_errors(errors: list[str]) -> str:
+    lines = ["set-workflow-status complete requires ship handoff reconciliation:"]
     for error in errors:
         lines.append(f"- {error}")
     return "\n".join(lines)

@@ -62,6 +62,28 @@ def _review_args(
     return tuple(args)
 
 
+def _ship_args(
+    *,
+    branch: str = "feature/reconciled-ship",
+    pr_url: str = "https://github.com/example/repo/pull/123",
+    codex_review_status: str = "clean",
+    state_memory_status: str = "updated",
+    state_memory_summary: str = "STATE.md records the shipped PR handoff.",
+) -> tuple[str, ...]:
+    return (
+        "--branch",
+        branch,
+        "--pr-url",
+        pr_url,
+        "--codex-review-status",
+        codex_review_status,
+        "--state-memory-status",
+        state_memory_status,
+        "--state-memory-summary",
+        state_memory_summary,
+    )
+
+
 def _prepare_review_pending_state(
     workflow_lib,
     tmpdir: str,
@@ -781,6 +803,20 @@ def test_workflow_state_set_workflow_status_requires_override_reason_for_manual_
     assert persisted_state["workflow_status"] == "uat_pending"
 
 
+def test_workflow_state_loads_legacy_state_without_ship_record():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        del state["ship_record"]
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert persisted_state["ship_record"] is None
+
+
 def test_workflow_state_set_workflow_status_complete_requires_ship_pending_and_shipped():
     workflow_lib = load_workflow_lib()
 
@@ -875,7 +911,337 @@ def test_workflow_state_set_step_status_shipped_requires_ship_pending_and_commit
     assert persisted_state["steps"][0]["status"] == "implementing"
 
 
-def test_next_stop_decision_requires_explicit_completion_after_shipped_step():
+def test_workflow_state_set_step_status_shipped_records_ship_handoff():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state_memory_path = Path(tmpdir) / "STATE.md"
+        state_memory_path.write_text(
+            "# State\n\n## Workflow Status\n- PR opened and ready for workflow completion.\n",
+            encoding="utf-8",
+        )
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["workflow_status"] = "uat_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        save_example_uat_artifact(
+            workflow_lib,
+            state,
+            state_memory_path=str(state_memory_path),
+        )
+
+        uat_result = run_workflow_state_command(
+            state_path,
+            "set-uat-status",
+            "passed",
+            "--summary",
+            "UAT passed and repo memory was reconciled.",
+        )
+        ship_result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "shipped",
+            *_ship_args(),
+        )
+        complete_result = run_workflow_state_command(
+            state_path,
+            "set-workflow-status",
+            "complete",
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert uat_result.returncode == 0, uat_result.stderr
+    assert ship_result.returncode == 0, ship_result.stderr
+    assert complete_result.returncode == 0, complete_result.stderr
+    assert persisted_state["workflow_status"] == "complete"
+    assert persisted_state["ship_record"]["step_id"] == "step-1"
+    assert persisted_state["ship_record"]["pr_url"] == "https://github.com/example/repo/pull/123"
+    assert persisted_state["ship_record"]["state_memory_status"] == "updated"
+
+
+def test_workflow_state_complete_requires_ship_record():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["workflow_status"] = "ship_pending"
+        state["steps"][0]["status"] = "shipped"
+        workflow_lib.save_state(state, state_path)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-workflow-status",
+            "complete",
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode != 0
+    assert "ship_record is missing" in result.stderr
+    assert persisted_state["workflow_status"] == "ship_pending"
+
+
+def test_workflow_state_complete_rejects_state_memory_drift_after_ship_record():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state_memory_path = Path(tmpdir) / "STATE.md"
+        state_memory_path.write_text(
+            "# State\n\n## Workflow Status\n- PR opened and ready for workflow completion.\n",
+            encoding="utf-8",
+        )
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["workflow_status"] = "uat_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        save_example_uat_artifact(
+            workflow_lib,
+            state,
+            state_memory_path=str(state_memory_path),
+        )
+
+        uat_result = run_workflow_state_command(
+            state_path,
+            "set-uat-status",
+            "passed",
+            "--summary",
+            "UAT passed.",
+        )
+        ship_result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "shipped",
+            *_ship_args(state_memory_summary="STATE.md was verified before PR completion."),
+        )
+        state_memory_path.write_text(
+            "# State\n\n## Workflow Status\n- Execution in progress.\n",
+            encoding="utf-8",
+        )
+        complete_result = run_workflow_state_command(
+            state_path,
+            "set-workflow-status",
+            "complete",
+        )
+        state_memory_path.write_text(
+            "# State\n\n## Workflow Status\n- PR opened and ready for workflow completion after reconciliation.\n",
+            encoding="utf-8",
+        )
+        refresh_result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "shipped",
+            *_ship_args(state_memory_summary="STATE.md was refreshed after drift."),
+        )
+        final_complete_result = run_workflow_state_command(
+            state_path,
+            "set-workflow-status",
+            "complete",
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert uat_result.returncode == 0, uat_result.stderr
+    assert ship_result.returncode == 0, ship_result.stderr
+    assert complete_result.returncode != 0
+    assert "STATE.md changed after ship_record was recorded" in complete_result.stderr
+    assert refresh_result.returncode == 0, refresh_result.stderr
+    assert final_complete_result.returncode == 0, final_complete_result.stderr
+    assert persisted_state["workflow_status"] == "complete"
+
+
+def test_workflow_state_shipped_requires_uat_metrics_reconciliation():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state_memory_path = Path(tmpdir) / "STATE.md"
+        state_memory_path.write_text(
+            "# State\n\n## Workflow Status\n- PR opened and ready for workflow completion.\n",
+            encoding="utf-8",
+        )
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["workflow_status"] = "ship_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        save_example_uat_artifact(
+            workflow_lib,
+            state,
+            state_memory_path=str(state_memory_path),
+        )
+        workflow_lib.update_uat_artifact_result(
+            Path(state["uat_artifact_path"]),
+            "passed",
+            "UAT was marked passed without a matching metrics event.",
+        )
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "shipped",
+            *_ship_args(),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode != 0
+    assert "metrics are missing a uat_passed event" in result.stderr
+    assert persisted_state["steps"][0]["status"] == "committed"
+    assert persisted_state["ship_record"] is None
+
+
+def test_workflow_state_shipped_rejects_state_memory_directory_without_traceback():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["workflow_status"] = "uat_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        save_example_uat_artifact(
+            workflow_lib,
+            state,
+            state_memory_path=tmpdir,
+        )
+
+        uat_result = run_workflow_state_command(
+            state_path,
+            "set-uat-status",
+            "passed",
+            "--summary",
+            "UAT passed with a malformed state memory path.",
+        )
+        ship_result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "shipped",
+            *_ship_args(),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert uat_result.returncode == 0, uat_result.stderr
+    assert ship_result.returncode != 0
+    assert "STATE.md reconciliation path is not a file" in ship_result.stderr
+    assert "Traceback" not in ship_result.stderr
+    assert persisted_state["steps"][0]["status"] == "committed"
+    assert persisted_state["ship_record"] is None
+
+
+def test_workflow_state_shipped_rejects_metrics_directory_without_traceback():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state_memory_path = Path(tmpdir) / "STATE.md"
+        state_memory_path.write_text(
+            "# State\n\n## Workflow Status\n- PR opened and ready for workflow completion.\n",
+            encoding="utf-8",
+        )
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["workflow_status"] = "ship_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        save_example_uat_artifact(
+            workflow_lib,
+            state,
+            state_memory_path=str(state_memory_path),
+        )
+        workflow_lib.update_uat_artifact_result(
+            Path(state["uat_artifact_path"]),
+            "passed",
+            "UAT was marked passed before metrics-log corruption.",
+        )
+        events_path = Path(state["metrics_dir"]) / "events.jsonl"
+        events_path.mkdir(parents=True)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "shipped",
+            *_ship_args(),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode != 0
+    assert "metrics event log could not be read" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert persisted_state["steps"][0]["status"] == "committed"
+    assert persisted_state["ship_record"] is None
+
+
+def test_workflow_state_shipped_ignores_stale_uat_passed_metric_from_prior_run():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state_memory_path = Path(tmpdir) / "STATE.md"
+        state_memory_path.write_text(
+            "# State\n\n## Workflow Status\n- PR opened and ready for workflow completion.\n",
+            encoding="utf-8",
+        )
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["workflow_status"] = "ship_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        save_example_uat_artifact(
+            workflow_lib,
+            state,
+            state_memory_path=str(state_memory_path),
+        )
+        workflow_lib.update_uat_artifact_result(
+            Path(state["uat_artifact_path"]),
+            "passed",
+            "UAT artifact was passed but current-run metrics were not written.",
+        )
+        metrics_dir = Path(state["metrics_dir"])
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        events_path = metrics_dir / "events.jsonl"
+        events_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "event": "uat_passed",
+                            "timestamp": "2026-01-01T00:00:00Z",
+                            "workflow_name": state["workflow_name"],
+                            "current_step_id": state["current_step_id"],
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "event": "execution_activated",
+                            "timestamp": "2026-01-01T00:01:00Z",
+                            "workflow_name": state["workflow_name"],
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "shipped",
+            *_ship_args(),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode != 0
+    assert "metrics are missing a uat_passed event" in result.stderr
+    assert persisted_state["steps"][0]["status"] == "committed"
+    assert persisted_state["ship_record"] is None
+
+
+def test_next_stop_decision_requires_handoff_reconciliation_after_shipped_step():
     workflow_lib = load_workflow_lib()
     state = workflow_lib.build_state_from_plan_spec(example_plan(), plan_path="PLANS.md")
     state["workflow_status"] = "ship_pending"
@@ -886,4 +1252,6 @@ def test_next_stop_decision_requires_explicit_completion_after_shipped_step():
     assert changed is False
     assert next_state["workflow_status"] == "ship_pending"
     assert decision.action == "block"
+    assert "ship handoff reconciliation" in (decision.prompt or "")
+    assert "set-step-status step-1 shipped --branch" in (decision.prompt or "")
     assert "set-workflow-status complete" in (decision.prompt or "")

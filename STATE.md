@@ -12,6 +12,7 @@
 - Treat PR stewardship as the next planned product capability after kernel stabilization, without expanding the current `$ship` contract yet.
 - Treat PR opening as the handoff point for PR-sized slices: push the branch, open a grounded PR, and let the user manually babysit reviewer feedback for now.
 - When continuing `next-steps.md`, automatically run the ship handoff after a verified PR-sized slice unless the user explicitly asks to stop before PR creation.
+- Ship completion now requires explicit repo-memory reconciliation: the shipped transition records branch, PR URL, Codex review status, and the current `STATE.md` digest before `complete` can be set.
 
 ## Release State
 - Pre-kernel-stabilization.

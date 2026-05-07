@@ -63,6 +63,21 @@ def _review_args(
     return tuple(args)
 
 
+def _ship_args() -> tuple[str, ...]:
+    return (
+        "--branch",
+        "feature/reconciled-ship",
+        "--pr-url",
+        "https://github.com/example/repo/pull/123",
+        "--codex-review-status",
+        "clean",
+        "--state-memory-status",
+        "updated",
+        "--state-memory-summary",
+        "STATE.md records the shipped PR handoff.",
+    )
+
+
 def test_approve_planning_uses_planning_metrics_root_when_execution_path_differs():
     planning_lib = load_planning_lib()
     workflow_router = load_workflow_router_lib()
@@ -290,10 +305,19 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_path = Path(tmpdir) / "state.json"
+        state_memory_path = Path(tmpdir) / "STATE.md"
+        state_memory_path.write_text(
+            "# State\n\n## Workflow Status\n- PR opened and ready for workflow completion.\n",
+            encoding="utf-8",
+        )
         state = _build_execution_state(workflow_lib, tmpdir)
         state["steps"][0]["status"] = "implementing"
         workflow_lib.save_state(state, state_path)
-        save_example_uat_artifact(workflow_lib, state)
+        save_example_uat_artifact(
+            workflow_lib,
+            state,
+            state_memory_path=str(state_memory_path),
+        )
 
         commands = [
             (
@@ -361,6 +385,7 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
                 "set-step-status",
                 "step-1",
                 "shipped",
+                *_ship_args(),
             ),
             (
                 "set-workflow-status",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -48,8 +49,11 @@ VALID_STEP_STATUSES = {
     "shipped",
 }
 VALID_UAT_STATUSES = {"pending", "passed", "failed_gap", "failed_replan"}
+UAT_METRIC_EVENTS = {"uat_passed", "uat_failed_gap", "uat_failed_replan"}
 VALID_REVIEW_OUTCOMES = {"pending", "passed", "failed"}
 VALID_REVIEW_VERIFICATION_STATUSES = {"passed", "blocked"}
+VALID_SHIP_CODEX_REVIEW_STATUSES = {"clean", "not_requested"}
+VALID_SHIP_STATE_MEMORY_STATUSES = {"updated", "verified"}
 VALID_ESCALATION_CODES = {
     "verification_missing",
     "verification_failed",
@@ -118,6 +122,7 @@ def validate_state(state: dict[str, Any]) -> None:
         raise ValueError(f"invalid mode: {state['mode']}")
     if not isinstance(state["request_codex_review"], bool):
         raise ValueError("request_codex_review must be a boolean")
+    _validate_ship_record(state.get("ship_record"))
     for field_name in ("workflow_name", "plan_path", "review_path", "ship_skill", "current_step_id", "base_branch"):
         if not isinstance(state[field_name], str) or not state[field_name].strip():
             raise ValueError(f"{field_name} must be a non-empty string")
@@ -201,6 +206,7 @@ def build_state_from_plan_spec(
         "current_step_id": normalized_steps[0]["id"],
         "base_branch": plan_spec.get("base_branch", base_branch),
         "request_codex_review": bool(plan_spec.get("request_codex_review", request_codex_review)),
+        "ship_record": None,
         "uat_artifact_path": str(plan_spec.get("uat_artifact_path", uat_artifact_path)),
         "metrics_dir": str(plan_spec.get("metrics_dir", metrics_dir)),
         "steps": normalized_steps,
@@ -402,6 +408,291 @@ def update_uat_artifact_result(path: Path, status: str, summary: str | None) -> 
         item["status"] = status
     save_uat_artifact(artifact, path)
     return artifact
+
+
+def build_ship_record(
+    state: dict[str, Any],
+    step: dict[str, Any],
+    *,
+    branch: str | None,
+    pr_url: str | None,
+    codex_review_status: str | None,
+    state_memory_status: str | None,
+    state_memory_summary: str | None,
+    recorded_at: str | None = None,
+) -> dict[str, Any]:
+    validate_state(state)
+    issues: list[str] = []
+    branch_value = _normalize_optional_text(branch)
+    pr_url_value = _normalize_optional_text(pr_url)
+    review_status_value = _normalize_optional_text(codex_review_status)
+    memory_status_value = _normalize_optional_text(state_memory_status)
+    memory_summary_value = _normalize_optional_text(state_memory_summary)
+
+    if branch_value is None:
+        issues.append("ship handoff requires --branch")
+    if pr_url_value is None:
+        issues.append("ship handoff requires --pr-url")
+    if review_status_value not in VALID_SHIP_CODEX_REVIEW_STATUSES:
+        issues.append("ship handoff requires --codex-review-status clean|not_requested")
+    if state["request_codex_review"] and review_status_value != "clean":
+        issues.append("request_codex_review is true, so ship handoff requires --codex-review-status clean")
+    if memory_status_value not in VALID_SHIP_STATE_MEMORY_STATUSES:
+        issues.append("ship handoff requires --state-memory-status updated|verified")
+    if memory_summary_value is None:
+        issues.append("ship handoff requires --state-memory-summary")
+
+    uat_artifact = load_uat_artifact(Path(state["uat_artifact_path"]))
+    uat_issues = _uat_passed_reconciliation_issues(state, uat_artifact=uat_artifact)
+    issues.extend(uat_issues)
+
+    state_memory_path_value: str | None = None
+    state_memory_hash: str | None = None
+    if uat_artifact is not None:
+        generated_from = uat_artifact.get("generated_from", {})
+        state_memory_path_value = generated_from.get("state_memory_path")
+        if isinstance(state_memory_path_value, str) and state_memory_path_value.strip():
+            state_memory_path = _resolve_repo_or_absolute_path(state_memory_path_value)
+            state_memory_hash = _state_memory_sha256_or_issue(
+                state_memory_path,
+                state_memory_path_value,
+                issues,
+            )
+        else:
+            issues.append("UAT artifact is missing generated_from.state_memory_path")
+
+    if issues:
+        raise ValueError(_render_ship_reconciliation_issues(issues))
+
+    record = {
+        "version": 1,
+        "workflow_name": state["workflow_name"],
+        "step_id": step["id"],
+        "branch": branch_value,
+        "pr_url": pr_url_value,
+        "codex_review_status": review_status_value,
+        "state_memory_status": memory_status_value,
+        "state_memory_path": state_memory_path_value,
+        "state_memory_sha256": state_memory_hash,
+        "state_memory_summary": memory_summary_value,
+        "uat_artifact_path": state["uat_artifact_path"],
+        "uat_status": "passed",
+        "metrics_dir": state["metrics_dir"],
+        "recorded_at": recorded_at or _utc_now_iso(),
+    }
+    _validate_ship_record(record)
+    return record
+
+
+def ship_completion_reconciliation_issues(
+    state: dict[str, Any],
+    *,
+    step: dict[str, Any] | None = None,
+) -> list[str]:
+    validate_state(state)
+    step = step or current_step(state)
+    issues: list[str] = []
+    record = state.get("ship_record")
+    if not isinstance(record, dict):
+        issues.append("ship_record is missing; run set-step-status shipped with PR and repo-memory handoff details")
+        return issues
+
+    if record.get("workflow_name") != state["workflow_name"]:
+        issues.append("ship_record.workflow_name does not match workflow state")
+    if record.get("step_id") != step["id"]:
+        issues.append("ship_record.step_id does not match current_step_id")
+    if record.get("uat_artifact_path") != state["uat_artifact_path"]:
+        issues.append("ship_record.uat_artifact_path does not match workflow state")
+    if record.get("metrics_dir") != state["metrics_dir"]:
+        issues.append("ship_record.metrics_dir does not match workflow state")
+    if state["request_codex_review"] and record.get("codex_review_status") != "clean":
+        issues.append("request_codex_review is true but ship_record.codex_review_status is not clean")
+
+    uat_artifact = load_uat_artifact(Path(state["uat_artifact_path"]))
+    issues.extend(_uat_passed_reconciliation_issues(state, uat_artifact=uat_artifact))
+
+    state_memory_path_value = record.get("state_memory_path")
+    if isinstance(state_memory_path_value, str) and state_memory_path_value.strip():
+        state_memory_path = _resolve_repo_or_absolute_path(state_memory_path_value)
+        if not state_memory_path.exists():
+            issues.append(f"STATE.md reconciliation file not found: {state_memory_path_value}")
+        else:
+            current_hash = _state_memory_sha256_or_issue(
+                state_memory_path,
+                state_memory_path_value,
+                issues,
+            )
+            if current_hash is not None and current_hash != record.get("state_memory_sha256"):
+                issues.append(
+                    "STATE.md changed after ship_record was recorded; rerun set-step-status shipped after reconciling repo memory"
+                )
+    else:
+        issues.append("ship_record.state_memory_path is missing")
+
+    return issues
+
+
+def _validate_ship_record(record: Any) -> None:
+    if record is None:
+        return
+    if not isinstance(record, dict):
+        raise ValueError("ship_record must be an object or null")
+    required_fields = {
+        "version",
+        "workflow_name",
+        "step_id",
+        "branch",
+        "pr_url",
+        "codex_review_status",
+        "state_memory_status",
+        "state_memory_path",
+        "state_memory_sha256",
+        "state_memory_summary",
+        "uat_artifact_path",
+        "uat_status",
+        "metrics_dir",
+        "recorded_at",
+    }
+    missing = sorted(required_fields - record.keys())
+    if missing:
+        raise ValueError("ship_record missing fields: " + ", ".join(missing))
+    if record["version"] != 1:
+        raise ValueError("ship_record version must be 1")
+    for field_name in (
+        "workflow_name",
+        "step_id",
+        "branch",
+        "pr_url",
+        "state_memory_path",
+        "state_memory_sha256",
+        "state_memory_summary",
+        "uat_artifact_path",
+        "metrics_dir",
+        "recorded_at",
+    ):
+        value = record[field_name]
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"ship_record.{field_name} must be a non-empty string")
+    if record["codex_review_status"] not in VALID_SHIP_CODEX_REVIEW_STATUSES:
+        raise ValueError(f"invalid ship_record.codex_review_status: {record['codex_review_status']}")
+    if record["state_memory_status"] not in VALID_SHIP_STATE_MEMORY_STATUSES:
+        raise ValueError(f"invalid ship_record.state_memory_status: {record['state_memory_status']}")
+    if record["uat_status"] != "passed":
+        raise ValueError("ship_record.uat_status must be passed")
+    state_memory_sha = record["state_memory_sha256"]
+    if len(state_memory_sha) != 64 or any(character not in "0123456789abcdef" for character in state_memory_sha):
+        raise ValueError("ship_record.state_memory_sha256 must be a lowercase sha256 hex digest")
+
+
+def _uat_passed_reconciliation_issues(
+    state: dict[str, Any],
+    *,
+    uat_artifact: dict[str, Any] | None,
+) -> list[str]:
+    issues: list[str] = []
+    if uat_artifact is None:
+        issues.append(f"UAT artifact not found: {state['uat_artifact_path']}")
+    else:
+        if uat_artifact["workflow_name"] != state["workflow_name"]:
+            issues.append("UAT artifact workflow_name does not match workflow state")
+        if uat_artifact["overall_status"] != "passed":
+            issues.append(f"UAT artifact overall_status must be passed, got {uat_artifact['overall_status']}")
+        pending_items = [
+            item["id"]
+            for item in uat_artifact["checklist"]
+            if item["status"] != "passed"
+        ]
+        if pending_items:
+            issues.append("UAT checklist has non-passed entries: " + ", ".join(pending_items))
+
+    try:
+        if not _metric_event_seen(state, "uat_passed"):
+            issues.append("metrics are missing a uat_passed event for this workflow and step")
+    except ValueError as exc:
+        issues.append(f"metrics event log is invalid: {exc}")
+    except OSError as exc:
+        issues.append(f"metrics event log could not be read: {exc}")
+    return issues
+
+
+def _metric_event_seen(state: dict[str, Any], event_name: str) -> bool:
+    events = _current_run_metric_events(_load_metrics_events(Path(state["metrics_dir"])), state)
+    for event in reversed(events):
+        if event.get("workflow_name") != state["workflow_name"]:
+            continue
+        if event.get("current_step_id") != state["current_step_id"]:
+            continue
+        current_event_name = event.get("event")
+        if current_event_name in UAT_METRIC_EVENTS:
+            return current_event_name == event_name
+    return False
+
+
+def _current_run_metric_events(
+    events: list[dict[str, Any]],
+    state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    latest_activation_index = -1
+    for index, event in enumerate(events):
+        if event.get("event") != "execution_activated":
+            continue
+        if event.get("workflow_name") != state["workflow_name"]:
+            continue
+        latest_activation_index = index
+    return events[latest_activation_index + 1 :]
+
+
+def _load_metrics_events(metrics_dir: Path) -> list[dict[str, Any]]:
+    events_path = metrics_dir / "events.jsonl"
+    if not events_path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for raw_line in events_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        event = json.loads(line)
+        if not isinstance(event, dict):
+            raise ValueError("metrics event log must contain JSON objects")
+        events.append(event)
+    return events
+
+
+def _resolve_repo_or_absolute_path(path_value: str) -> Path:
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    return ROOT_DIR / path
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _state_memory_sha256_or_issue(
+    path: Path,
+    path_value: str,
+    issues: list[str],
+) -> str | None:
+    if not path.exists():
+        issues.append(f"STATE.md reconciliation file not found: {path_value}")
+        return None
+    if not path.is_file():
+        issues.append(f"STATE.md reconciliation path is not a file: {path_value}")
+        return None
+    try:
+        return _sha256_file(path)
+    except OSError as exc:
+        issues.append(f"STATE.md reconciliation file could not be read: {path_value}: {exc}")
+        return None
+
+
+def _render_ship_reconciliation_issues(issues: list[str]) -> str:
+    return "ship handoff reconciliation failed:\n- " + "\n- ".join(issues)
 
 
 def _validate_step(step: dict[str, Any]) -> None:
@@ -892,6 +1183,7 @@ def _normalize_state_compat(state: Any, path: Path) -> dict[str, Any]:
     normalized.setdefault("uat_artifact_path", str(state_root / "uat.json"))
     normalized.setdefault("metrics_dir", str(state_root / "metrics"))
     normalized.setdefault("escalation", None)
+    normalized.setdefault("ship_record", None)
     steps = normalized.get("steps")
     if isinstance(steps, list):
         normalized["steps"] = [
@@ -1349,6 +1641,12 @@ def next_stop_decision(state: dict[str, Any]) -> tuple[dict[str, Any], WorkflowD
 
     if state["workflow_status"] == "ship_pending":
         if step["status"] == "shipped":
+            reconciliation_issues = ship_completion_reconciliation_issues(state, step=step)
+            if reconciliation_issues:
+                return state, WorkflowDecision(
+                    action="block",
+                    prompt=_ship_reconciliation_prompt(state, step, reconciliation_issues),
+                ), False
             return state, WorkflowDecision(action="block", prompt=_ship_completion_prompt(state, step)), False
         return state, WorkflowDecision(action="block", prompt=_ship_prompt(state, step)), False
 
@@ -1724,8 +2022,14 @@ def _ship_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         "If `@codex review` is requested, watch the PR for Codex review comments, fix relevant findings, "
         "commit and push each fix, reply to the review thread, request `@codex review` again, and continue "
         "until Codex reports no major issues or a concrete blocker requires escalation.\n\n"
+        "Before marking shipped, reconcile repo memory and record the handoff:\n"
+        "- Update or verify `STATE.md` so its current delivery record matches the PR and UAT outcome.\n"
+        "- Record the branch, PR URL, Codex review status, and `STATE.md` reconciliation summary on the shipped transition.\n"
+        "- `set-workflow-status complete` will block if UAT, metrics, PR handoff, or `STATE.md` digest no longer match.\n\n"
         "When shipping succeeds:\n"
-        f"- Run `{STATE_TOOL_COMMAND} set-step-status {step['id']} shipped`.\n"
+        f"- Run `{STATE_TOOL_COMMAND} set-step-status {step['id']} shipped --branch <branch> --pr-url <url> "
+        "--codex-review-status <clean|not_requested> --state-memory-status <updated|verified> "
+        "--state-memory-summary \"<how STATE.md matches the shipped PR>\"`.\n"
         f"- Run `{STATE_TOOL_COMMAND} set-workflow-status complete`.\n"
         "- Report the PR URL, final Codex review status, and final workflow status."
     )
@@ -1738,8 +2042,29 @@ def _ship_completion_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         f"Current step: `{step['id']}` - {step['title']}\n"
         "The current step is `shipped` and the workflow is still `ship_pending`.\n\n"
         "Finish the deployment phase now:\n"
+        "- Confirm `ship_record` still matches the PR URL, UAT artifact, metrics, and current `STATE.md` digest.\n"
         f"- Run `{STATE_TOOL_COMMAND} set-workflow-status complete`.\n"
         "- Report the PR URL and final status."
+    )
+
+
+def _ship_reconciliation_prompt(
+    state: dict[str, Any],
+    step: dict[str, Any],
+    issues: list[str],
+) -> str:
+    issue_lines = _bullets(issues)
+    return (
+        "The publish work is marked shipped, but workflow completion is blocked by ship handoff reconciliation.\n\n"
+        f"Workflow: `{state['workflow_name']}`\n"
+        f"Current step: `{step['id']}` - {step['title']}\n"
+        f"Current step status: `{step['status']}`\n\n"
+        f"Blocking reconciliation issues:\n{issue_lines}\n\n"
+        "Repair the PR, UAT, metrics, or repo-memory mismatch, then refresh the shipped handoff:\n"
+        f"- Run `{STATE_TOOL_COMMAND} set-step-status {step['id']} shipped --branch <branch> --pr-url <url> "
+        "--codex-review-status <clean|not_requested> --state-memory-status <updated|verified> "
+        "--state-memory-summary \"<how STATE.md matches the shipped PR>\"`.\n"
+        f"- Run `{STATE_TOOL_COMMAND} set-workflow-status complete` only after the handoff validates."
     )
 
 
