@@ -1175,6 +1175,72 @@ def test_workflow_state_shipped_rejects_metrics_directory_without_traceback():
     assert persisted_state["ship_record"] is None
 
 
+def test_workflow_state_shipped_ignores_stale_uat_passed_metric_from_prior_run():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state_memory_path = Path(tmpdir) / "STATE.md"
+        state_memory_path.write_text(
+            "# State\n\n## Workflow Status\n- PR opened and ready for workflow completion.\n",
+            encoding="utf-8",
+        )
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["workflow_status"] = "ship_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        save_example_uat_artifact(
+            workflow_lib,
+            state,
+            state_memory_path=str(state_memory_path),
+        )
+        workflow_lib.update_uat_artifact_result(
+            Path(state["uat_artifact_path"]),
+            "passed",
+            "UAT artifact was passed but current-run metrics were not written.",
+        )
+        metrics_dir = Path(state["metrics_dir"])
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        events_path = metrics_dir / "events.jsonl"
+        events_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "event": "uat_passed",
+                            "timestamp": "2026-01-01T00:00:00Z",
+                            "workflow_name": state["workflow_name"],
+                            "current_step_id": state["current_step_id"],
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "event": "execution_activated",
+                            "timestamp": "2026-01-01T00:01:00Z",
+                            "workflow_name": state["workflow_name"],
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "shipped",
+            *_ship_args(),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode != 0
+    assert "metrics are missing a uat_passed event" in result.stderr
+    assert persisted_state["steps"][0]["status"] == "committed"
+    assert persisted_state["ship_record"] is None
+
+
 def test_next_stop_decision_requires_handoff_reconciliation_after_shipped_step():
     workflow_lib = load_workflow_lib()
     state = workflow_lib.build_state_from_plan_spec(example_plan(), plan_path="PLANS.md")

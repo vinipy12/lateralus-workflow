@@ -49,6 +49,7 @@ VALID_STEP_STATUSES = {
     "shipped",
 }
 VALID_UAT_STATUSES = {"pending", "passed", "failed_gap", "failed_replan"}
+UAT_METRIC_EVENTS = {"uat_passed", "uat_failed_gap", "uat_failed_replan"}
 VALID_REVIEW_OUTCOMES = {"pending", "passed", "failed"}
 VALID_REVIEW_VERIFICATION_STATUSES = {"passed", "blocked"}
 VALID_SHIP_CODEX_REVIEW_STATUSES = {"clean", "not_requested"}
@@ -615,15 +616,30 @@ def _uat_passed_reconciliation_issues(
 
 
 def _metric_event_seen(state: dict[str, Any], event_name: str) -> bool:
-    for event in _load_metrics_events(Path(state["metrics_dir"])):
-        if event.get("event") != event_name:
-            continue
+    events = _current_run_metric_events(_load_metrics_events(Path(state["metrics_dir"])), state)
+    for event in reversed(events):
         if event.get("workflow_name") != state["workflow_name"]:
             continue
         if event.get("current_step_id") != state["current_step_id"]:
             continue
-        return True
+        current_event_name = event.get("event")
+        if current_event_name in UAT_METRIC_EVENTS:
+            return current_event_name == event_name
     return False
+
+
+def _current_run_metric_events(
+    events: list[dict[str, Any]],
+    state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    latest_activation_index = -1
+    for index, event in enumerate(events):
+        if event.get("event") != "execution_activated":
+            continue
+        if event.get("workflow_name") != state["workflow_name"]:
+            continue
+        latest_activation_index = index
+    return events[latest_activation_index + 1 :]
 
 
 def _load_metrics_events(metrics_dir: Path) -> list[dict[str, Any]]:
