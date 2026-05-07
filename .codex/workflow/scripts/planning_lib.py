@@ -987,6 +987,7 @@ def audit_plan_against_discovery(plan_spec: dict[str, Any], discovery: dict[str,
 
 
 def _audit_context_artifact(context: dict[str, Any]) -> list[str]:
+    context = _normalize_context_contract_compat(context)
     issues: list[str] = []
     issues.extend(_validate_delivery_contract(context))
     if not _artifact_non_empty_string(context.get("goal")):
@@ -1957,7 +1958,9 @@ def _planning_phase_contract(state: dict[str, Any], *, phase_name: str) -> str:
 
 def _validate_discuss_phase(state: dict[str, Any]) -> list[str]:
     issues: list[str] = []
-    context = _load_required_artifact(resolve_repo_path(state["context_path"]), "context artifact")
+    context = _normalize_context_contract_compat(
+        _load_required_artifact(resolve_repo_path(state["context_path"]), "context artifact")
+    )
     issues.extend(_validate_delivery_contract(context))
     if not _artifact_non_empty_string(context.get("goal")):
         issues.append("discuss phase requires context.goal")
@@ -2169,6 +2172,28 @@ def _validate_bootstrap_expectations(path: Path) -> list[str]:
             "greenfield convergence phase requires deployment_release_baseline_expectations"
         )
     return issues
+
+
+def _normalize_context_contract_compat(context: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(context)
+    normalized.setdefault(
+        "delivery_contract",
+        {
+            "mode": "one_shot",
+            "comparison_required": False,
+            "basis": "legacy context artifact predates delivery_contract; defaulted to one-shot planning",
+        },
+    )
+    normalized.setdefault(
+        "clarification_gate",
+        {
+            "material_questions": [],
+            "no_material_questions_reason": (
+                "legacy context artifact predates clarification_gate; no material question was recorded"
+            ),
+        },
+    )
+    return normalized
 
 
 def _validate_delivery_contract(context: dict[str, Any]) -> list[str]:

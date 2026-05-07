@@ -379,6 +379,21 @@ def test_discuss_phase_requires_one_shot_delivery_contract():
     assert "context.delivery_contract.basis is required" in issues
 
 
+def test_discuss_phase_accepts_legacy_context_without_new_contract_fields():
+    planning_lib = _load_planning_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state = _build_temp_planning_state(planning_lib, Path(tmpdir))
+        context = _context_payload(state["feature_request"])
+        context.pop("delivery_contract")
+        context.pop("clarification_gate")
+        Path(state["context_path"]).write_text(json.dumps(context), encoding="utf-8")
+
+        issues = planning_lib.validate_phase_outputs(state, phase="discuss")
+
+    assert issues == []
+
+
 def test_discuss_phase_requires_clarification_gate_for_material_questions():
     planning_lib = _load_planning_lib()
 
