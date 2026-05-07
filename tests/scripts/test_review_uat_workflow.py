@@ -1093,6 +1093,45 @@ def test_workflow_state_shipped_requires_uat_metrics_reconciliation():
     assert persisted_state["ship_record"] is None
 
 
+def test_workflow_state_shipped_rejects_state_memory_directory_without_traceback():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["workflow_status"] = "uat_pending"
+        state["steps"][0]["status"] = "committed"
+        workflow_lib.save_state(state, state_path)
+        save_example_uat_artifact(
+            workflow_lib,
+            state,
+            state_memory_path=tmpdir,
+        )
+
+        uat_result = run_workflow_state_command(
+            state_path,
+            "set-uat-status",
+            "passed",
+            "--summary",
+            "UAT passed with a malformed state memory path.",
+        )
+        ship_result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "shipped",
+            *_ship_args(),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert uat_result.returncode == 0, uat_result.stderr
+    assert ship_result.returncode != 0
+    assert "STATE.md reconciliation path is not a file" in ship_result.stderr
+    assert "Traceback" not in ship_result.stderr
+    assert persisted_state["steps"][0]["status"] == "committed"
+    assert persisted_state["ship_record"] is None
+
+
 def test_next_stop_decision_requires_handoff_reconciliation_after_shipped_step():
     workflow_lib = load_workflow_lib()
     state = workflow_lib.build_state_from_plan_spec(example_plan(), plan_path="PLANS.md")

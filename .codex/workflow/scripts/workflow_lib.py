@@ -452,10 +452,11 @@ def build_ship_record(
         state_memory_path_value = generated_from.get("state_memory_path")
         if isinstance(state_memory_path_value, str) and state_memory_path_value.strip():
             state_memory_path = _resolve_repo_or_absolute_path(state_memory_path_value)
-            if state_memory_path.exists():
-                state_memory_hash = _sha256_file(state_memory_path)
-            else:
-                issues.append(f"STATE.md reconciliation file not found: {state_memory_path_value}")
+            state_memory_hash = _state_memory_sha256_or_issue(
+                state_memory_path,
+                state_memory_path_value,
+                issues,
+            )
         else:
             issues.append("UAT artifact is missing generated_from.state_memory_path")
 
@@ -515,8 +516,12 @@ def ship_completion_reconciliation_issues(
         if not state_memory_path.exists():
             issues.append(f"STATE.md reconciliation file not found: {state_memory_path_value}")
         else:
-            current_hash = _sha256_file(state_memory_path)
-            if current_hash != record.get("state_memory_sha256"):
+            current_hash = _state_memory_sha256_or_issue(
+                state_memory_path,
+                state_memory_path_value,
+                issues,
+            )
+            if current_hash is not None and current_hash != record.get("state_memory_sha256"):
                 issues.append(
                     "STATE.md changed after ship_record was recorded; rerun set-step-status shipped after reconciling repo memory"
                 )
@@ -648,6 +653,24 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _state_memory_sha256_or_issue(
+    path: Path,
+    path_value: str,
+    issues: list[str],
+) -> str | None:
+    if not path.exists():
+        issues.append(f"STATE.md reconciliation file not found: {path_value}")
+        return None
+    if not path.is_file():
+        issues.append(f"STATE.md reconciliation path is not a file: {path_value}")
+        return None
+    try:
+        return _sha256_file(path)
+    except OSError as exc:
+        issues.append(f"STATE.md reconciliation file could not be read: {path_value}: {exc}")
+        return None
 
 
 def _render_ship_reconciliation_issues(issues: list[str]) -> str:
