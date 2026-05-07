@@ -136,6 +136,11 @@ def _write_supporting_planning_artifacts(
             {
                 "version": 1,
                 "feature_request": feature_request,
+                "delivery_contract": {
+                    "mode": "one_shot",
+                    "comparison_required": False,
+                    "basis": "user request, repo context, and bounded clarification",
+                },
                 "goal": "Ship a decision-complete plan.",
                 "target_user": "Workflow maintainers",
                 "desired_behavior": "The planner should produce a safe, implementable plan.",
@@ -144,6 +149,10 @@ def _write_supporting_planning_artifacts(
                 "locked_decisions": ["Keep planning artifacts JSON-first."],
                 "defaults_taken": ["Prefer the smallest viable slice."],
                 "open_questions": open_questions or [],
+                "clarification_gate": {
+                    "material_questions": [],
+                    "no_material_questions_reason": "The request is narrow enough to plan without changing product scope.",
+                },
                 "constraints": ["Do not implement code during planning."],
                 "success_criteria": ["The approved plan is audit-clean."],
                 "non_goals": ["Execution-phase work."],
@@ -1402,9 +1411,13 @@ def test_planning_artifacts_are_initialized():
         state_memory = Path(state["state_memory_path"]).read_text(encoding="utf-8")
 
     assert context["feature_request"] == "Add a planning workflow"
+    assert context["delivery_contract"]["mode"] == "one_shot"
+    assert context["delivery_contract"]["comparison_required"] is False
     assert context["goal"] == ""
+    assert context["clarification_gate"]["material_questions"] == []
     assert discovery["feature_request"] == "Add a planning workflow"
     assert discovery["current"]["entry_points"] == []
+    assert discovery["current"]["comparison_diagnostic"]["mode"] == "none"
     assert scope_contract["must_have"] == []
     assert architecture_constraints["required_reuse"] == []
     assert product_scope_audit["recommendation"] == "pending"

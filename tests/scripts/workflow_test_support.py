@@ -114,6 +114,11 @@ def write_supporting_planning_artifacts(
             {
                 "version": 1,
                 "feature_request": feature_request,
+                "delivery_contract": {
+                    "mode": "one_shot",
+                    "comparison_required": False,
+                    "basis": "user request, repo context, and bounded clarification",
+                },
                 "goal": "Ship a decision-complete plan.",
                 "target_user": "Workflow maintainers",
                 "desired_behavior": "The planner should produce a safe, implementable plan.",
@@ -122,6 +127,10 @@ def write_supporting_planning_artifacts(
                 "locked_decisions": ["Keep planning artifacts JSON-first."],
                 "defaults_taken": ["Prefer the smallest viable slice."],
                 "open_questions": open_questions or [],
+                "clarification_gate": {
+                    "material_questions": [],
+                    "no_material_questions_reason": "The request is narrow enough to plan without changing product scope.",
+                },
                 "constraints": ["Do not implement code during planning."],
                 "success_criteria": ["The approved plan is audit-clean."],
                 "non_goals": ["Execution-phase work."],
