@@ -28,6 +28,10 @@ WORKFLOW_SKILL_OPENAI_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "ag
 WORKFLOW_ROUTER_SKILL_SCRIPT_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "scripts" / "workflow_router.py"
 PLANNING_STATE_SKILL_SCRIPT_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "scripts" / "planning_state.py"
 WORKFLOW_STATE_SKILL_SCRIPT_PATH = REPO_ROOT / ".agents" / "skills" / "workflow" / "scripts" / "workflow_state.py"
+WORKFLOW_ALIAS_SKILL_PATH = REPO_ROOT / ".agents" / "skills" / "lateralus-workflow" / "SKILL.md"
+WORKFLOW_ALIAS_ROUTER_SCRIPT_PATH = (
+    REPO_ROOT / ".agents" / "skills" / "lateralus-workflow" / "scripts" / "workflow_router.py"
+)
 SHIP_SKILL_PATH = REPO_ROOT / ".agents" / "skills" / "ship" / "SKILL.md"
 SHIP_WORKFLOW_STATE_SKILL_SCRIPT_PATH = REPO_ROOT / ".agents" / "skills" / "ship" / "scripts" / "workflow_state.py"
 PLUGIN_MANIFEST_PATH = REPO_ROOT / ".codex-plugin" / "plugin.json"
@@ -1203,27 +1207,52 @@ def test_workflow_skill_is_scaffolded():
     assert WORKFLOW_ROUTER_SKILL_SCRIPT_PATH.exists()
     assert PLANNING_STATE_SKILL_SCRIPT_PATH.exists()
     assert WORKFLOW_STATE_SKILL_SCRIPT_PATH.exists()
+    assert WORKFLOW_ALIAS_SKILL_PATH.exists()
+    assert WORKFLOW_ALIAS_ROUTER_SCRIPT_PATH.exists()
     assert SHIP_SKILL_PATH.exists()
     assert SHIP_WORKFLOW_STATE_SKILL_SCRIPT_PATH.exists()
 
     skill_text = WORKFLOW_SKILL_PATH.read_text(encoding="utf-8")
     metadata_text = WORKFLOW_SKILL_OPENAI_PATH.read_text(encoding="utf-8")
 
-    assert "python3 .agents/skills/workflow/scripts/workflow_router.py planning-start" in skill_text
-    assert "python3 .agents/skills/workflow/scripts/workflow_router.py bootstrap-start" in skill_text
-    assert "python3 .agents/skills/workflow/scripts/workflow_state.py set-uat-status" in skill_text
+    assert "python3 scripts/workflow_router.py planning-start" in skill_text
+    assert "python3 scripts/workflow_router.py bootstrap-start" in skill_text
+    assert "python3 scripts/workflow_state.py set-uat-status" in skill_text
     assert "Deployment begins only after UAT moves the workflow to `ship_pending`." in skill_text
-    assert ".codex/workflow/scripts/workflow_router.py" not in skill_text
+    assert ".agents/skills/workflow/scripts/workflow_router.py" not in skill_text
     assert "Use $workflow" in metadata_text
+
+
+def test_lateralus_workflow_alias_skill_routes_to_workflow_contract():
+    alias_text = WORKFLOW_ALIAS_SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "name: lateralus-workflow" in alias_text
+    assert "$lateralus-workflow:" in alias_text
+    assert "Use the same contract as `$workflow`" in alias_text
+    assert "python3 scripts/workflow_router.py planning-start" in alias_text
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = subprocess.run(
+            [sys.executable, str(WORKFLOW_ALIAS_ROUTER_SCRIPT_PATH), "--json", "status"],
+            cwd=tmpdir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["message"] == "no active workflow state"
 
 
 def test_ship_skill_uses_bundled_workflow_state_wrapper():
     skill_text = SHIP_SKILL_PATH.read_text(encoding="utf-8")
 
-    assert "python3 .agents/skills/ship/scripts/workflow_state.py set-step-status" in skill_text
+    assert "python3 scripts/workflow_state.py set-step-status" in skill_text
     assert "ship_pending" in skill_text
     assert "user explicitly asked to ship anyway" not in skill_text
-    assert ".codex/workflow/scripts/workflow_state.py" not in skill_text
+    assert ".agents/skills/ship/scripts/workflow_state.py" not in skill_text
 
 
 def test_readme_and_next_steps_reflect_new_surface():
@@ -1234,6 +1263,9 @@ def test_readme_and_next_steps_reflect_new_surface():
     assert "set-uat-status" in readme_text
     assert "set-workflow-status <status> --override-reason" in readme_text
     assert ".codex/workflow/metrics/" in readme_text
+    assert "$lateralus-workflow" in readme_text
+    assert "scripts/lateralus_plugin.py install" in readme_text
+    assert "./.codex/plugins/lateralus-workflow" in readme_text
     assert "uv run pytest tests/scripts/" in readme_text
     assert "Current Repo State" in next_steps_text
     assert "Distance To Production Ready" in next_steps_text
@@ -1326,6 +1358,7 @@ def test_plugin_manifest_does_not_claim_hook_bundling():
 
     assert manifest["skills"] == "./.agents/skills/"
     assert "hooks" not in manifest
+    assert any("$lateralus-workflow" in prompt for prompt in manifest["interface"]["defaultPrompt"])
 
 
 def test_planning_artifacts_are_initialized():

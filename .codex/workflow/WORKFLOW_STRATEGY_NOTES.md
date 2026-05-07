@@ -975,6 +975,13 @@ For example:
 
 Skills bundled in the plugin become available immediately after installation.
 
+For personal installs, prefer a Codex-home source checkout such as:
+
+- `~/.codex/plugins/lateralus-workflow`
+- marketplace source path `./.codex/plugins/lateralus-workflow`
+
+Because Codex installs local plugins into a cache, updating the source checkout is not always enough for an already-installed plugin. Keep the source checkout and installed cache copies in sync, then restart Codex so the active session reloads the new skill files.
+
 ### Public distribution status
 
 Official docs currently say official public plugin publishing is coming soon.
@@ -1032,9 +1039,11 @@ That gives you:
 The current repo-local implementation now uses:
 
 - `$workflow` as the intended Codex-native skill entrypoint
+- `$lateralus-workflow` as a compatibility alias for users who invoke the package name
 - `.agents/skills/workflow/SKILL.md` as the top-level workflow skill
 - `.codex/workflow/scripts/workflow_router.py` as the deterministic backend router
 - `/workflow ...` only as a compatibility shim through `user_prompt_hook.py`
+- `scripts/lateralus_plugin.py` as the personal install/update helper for `~/.codex/plugins/lateralus-workflow` and installed plugin cache copies
 
 That means the engine still lives in `.codex/workflow/scripts/...`, but the intended UX has shifted from hook-first to skill-first.
 

@@ -1,12 +1,12 @@
 ---
 name: ship
-description: Finish a ship-ready branch by validating the final workflow state, pushing the current branch, generating the PR title/body in memory, creating the pull request, and optionally requesting `@codex review`. Use when the user says ship, open the PR, publish the branch, or finish the workflow after execution has reached `ship_pending`.
+description: Finish a ship-ready branch by validating the final workflow state, pushing the current branch, generating the PR title/body in memory, creating the pull request, and shepherding requested `@codex review` comments until Codex reports the branch is clean. Use when the user says ship, open the PR, publish the branch, or finish the workflow after execution has reached `ship_pending`.
 ---
 
 # Ship
 
 Use this skill for the final publication phase after execution has reached `ship_pending`.
-Use the repo-local `.agents/skills/ship/scripts/workflow_state.py` wrapper when you need to update workflow state from this checkout.
+Use the bundled `scripts/workflow_state.py` wrapper when you need to update workflow state. Resolve it relative to this skill directory; do not assume the target project has `.agents/skills/` checked in.
 
 ## Inputs
 
@@ -29,12 +29,17 @@ Use the repo-local `.agents/skills/ship/scripts/workflow_state.py` wrapper when 
 5. Push the branch with local git.
 6. Prefer GitHub MCP to create the PR and to post a PR comment; fall back to `gh` only if MCP is unavailable.
 7. If `request_codex_review` is `true`, post `@codex review` to the PR after creation.
-8. Report that the PR is ready for the user to manually babysit review comments and coding-change suggestions.
-9. Mark the workflow complete:
-   - Deployment scope here is branch push, PR creation, optional `@codex review`, and workflow completion only.
+8. If Codex review was requested, babysit the review loop before marking the workflow complete:
+   - Watch PR comments, review submissions, review threads, and PR reactions for the Codex result.
+   - For each new Codex finding, decide whether it is relevant against the actual code behavior.
+   - Fix relevant findings narrowly, run the focused verification, commit, push, reply to the review thread with the fixing commit, and request `@codex review` again.
+   - Continue until Codex reports that it found no major issues or otherwise indicates the branch is clean.
+   - If Codex review stalls, fails, or needs a product decision, stop and report the exact blocker.
+9. Mark the workflow complete after Codex review is clean, or immediately if Codex review was not requested:
+   - Deployment scope here is branch push, PR creation, requested Codex review babysitting, and workflow completion only.
    - Update `STATE.md` if shipping changed release state, latest decisions, or unresolved risks.
-   - `python3 .agents/skills/ship/scripts/workflow_state.py set-step-status <current-step-id> shipped`
-   - `python3 .agents/skills/ship/scripts/workflow_state.py set-workflow-status complete`
+   - `python3 scripts/workflow_state.py set-step-status <current-step-id> shipped`
+   - `python3 scripts/workflow_state.py set-workflow-status complete`
 
 ## Rules
 
@@ -47,7 +52,7 @@ Use the repo-local `.agents/skills/ship/scripts/workflow_state.py` wrapper when 
 - If push or PR creation fails, stop and report the exact blocker instead of guessing.
 - Do not use this skill before the workflow reaches `ship_pending`.
 - Do not ship if the workflow state still indicates an earlier step is uncommitted.
-- Do not continue into new kernel work after opening a PR for a PR-sized slice; hand the PR back to the user for manual babysitting.
+- Do not continue into new kernel work after opening a PR for a PR-sized slice; finish the requested Codex review babysitting loop first.
 
 ## GitHub
 
@@ -63,4 +68,4 @@ Report:
 - PR title
 - PR URL
 - whether `@codex review` was requested
-- that the PR is ready for manual user babysitting
+- final Codex review status, including any blocker if the loop could not reach a clean review

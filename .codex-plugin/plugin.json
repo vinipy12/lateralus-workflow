@@ -30,6 +30,7 @@
     "websiteURL": "https://github.com/vinipy12/lateralus-workflow",
     "defaultPrompt": [
       "Start a discuss-first plan for this feature with $workflow.",
+      "Start the same workflow through the package-name alias with $lateralus-workflow.",
       "Resume the active workflow and tell me the next required step.",
       "Approve the current plan and move it into execution."
     ],

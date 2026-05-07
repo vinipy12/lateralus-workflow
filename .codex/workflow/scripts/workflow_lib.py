@@ -1714,17 +1714,20 @@ def _ship_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         f"Base branch: `{state['base_branch']}`\n"
         f"Use the `${state['ship_skill']}` skill.\n"
         f"Request `@codex review` after PR creation: `{review_flag}`\n\n"
-        "Deployment scope for this workflow is limited to branch push, PR creation, optional `@codex review`, "
-        "and workflow completion.\n\n"
+        "Deployment scope for this workflow is limited to branch push, PR creation, requested Codex review "
+        "babysitting, and workflow completion.\n\n"
         "Requirements:\n"
         "- Do not create an intermediate `PR_DESCRIPTION.md` file.\n"
         "- Generate the PR title and body in memory.\n"
         "- Prefer GitHub MCP for PR creation and PR comments; fall back to `gh` only if MCP is unavailable.\n"
         "- Push the current branch before creating the PR.\n\n"
+        "If `@codex review` is requested, watch the PR for Codex review comments, fix relevant findings, "
+        "commit and push each fix, reply to the review thread, request `@codex review` again, and continue "
+        "until Codex reports no major issues or a concrete blocker requires escalation.\n\n"
         "When shipping succeeds:\n"
         f"- Run `{STATE_TOOL_COMMAND} set-step-status {step['id']} shipped`.\n"
         f"- Run `{STATE_TOOL_COMMAND} set-workflow-status complete`.\n"
-        "- Report the PR URL and final status."
+        "- Report the PR URL, final Codex review status, and final workflow status."
     )
 
 
