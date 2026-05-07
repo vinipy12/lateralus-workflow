@@ -89,7 +89,7 @@ For direct activation from an approved plan artifact:
 - Read `AGENTS.md` before acting on execution steps.
 - Keep planning JSON-first and execution stepwise.
 - Treat `.codex/workflow/metrics/` and `.codex/workflow/uat.json` as auditable local artifacts, not scratch files.
-- When a completed slice is PR-sized, push it and open a grounded PR before continuing broader kernel work; report when the PR is ready for the user to manually babysit.
+- When a completed slice is PR-sized, push it and open a grounded PR before continuing broader kernel work; if Codex review is requested, babysit Codex review comments until Codex reports the branch is clean or a concrete blocker requires user input.
 - When the user asks to follow or continue `next-steps.md`, treat the ship handoff as part of the work for any PR-sized completed slice; do not wait for a separate "ship" prompt unless the user explicitly pauses before PR creation.
 - Respect phase ownership:
   - planning updates `PROJECT.md` only when product intent or durable constraints change

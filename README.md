@@ -122,7 +122,7 @@ Execution now ends with a blocking post-code control loop:
 6. `gap_closure_pending` for fixable UAT gaps inside the same workflow
 7. `replan_required` when UAT shows a scope or architecture mismatch
 8. `ship_pending` only after UAT passes
-9. Deployment is intentionally limited to branch push, PR creation, optional `@codex review`, and workflow completion
+9. Deployment is intentionally limited to branch push, PR creation, requested Codex review babysitting, and workflow completion
 
 Clear normal execution escalations with `python3 .codex/workflow/scripts/workflow_state.py resolve-escalation` after the blocker is fixed; the workflow returns to the pre-escalation phase instead of always dropping back to `active`. Manual workflow-status jumps are still override-only operations. `set-workflow-status complete` is reserved for the real ship path after the current step is already `shipped`.
 

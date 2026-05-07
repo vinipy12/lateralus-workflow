@@ -13,9 +13,9 @@
   deterministic pre-review sensors gate `review_pending`, execution blockers move into explicit `execution_escalated` state with structured metadata, and scorecards now expose escalation categories plus repeated review/UAT loop counts.
 - Review-loop hardening now has an explicit `agents_update_required` step contract for durable-guidance changes.
   Passing review cannot advance to `commit_pending` unless required AGENTS guidance updates are recorded.
-- PR stewardship is now a planned post-ship capability, not the current `$ship` contract.
-  The intended direction is a PR steward loop that watches CI, quality gates, and reviewer comments, applies relevant fixes, requests re-review, and stops only when the PR is merge-ready or escalation is required.
-- Until PR stewardship is implemented, PR-sized slices should be pushed and opened as grounded PRs, then handed back to the user for manual babysitting of reviewer comments and coding-change suggestions.
+- PR stewardship is now part of the `$ship` guidance for requested Codex reviews.
+  The ship loop watches Codex review comments, applies relevant fixes, requests re-review, and stops only when Codex reports the branch is clean or escalation is required.
+  Broader CI and quality-gate stewardship remains a future capability.
 - Packaging hardening is now started for Milestone 3:
   `$lateralus-workflow` is a package-name alias for `$workflow`, skill instructions no longer assume the target repo has `.agents/skills/`, and `scripts/lateralus_plugin.py` manages the personal Codex checkout plus installed cache updates.
 
@@ -134,5 +134,5 @@
 - The audit contract no longer depends on placeholder inference or repo-author context to stay honest.
 - A clean install in a normal repo checkout can start, approve, resume, review, UAT, and ship a workflow through the supported path without undocumented setup.
 - Several real dogfood runs reach `ship_pending` without manual state edits, and any blocked run leaves enough evidence for a fresh agent to resume or escalate correctly.
-- PR-sized dogfood slices end with a pushed branch, grounded PR title/body, and explicit handoff for manual review babysitting before the next unrelated slice begins.
+- PR-sized dogfood slices end with a pushed branch, grounded PR title/body, and Codex review babysitting until the branch is clean or a concrete blocker is escalated before the next unrelated slice begins.
 - At that point, it is reasonable to call the repo production ready for its intended scope.
