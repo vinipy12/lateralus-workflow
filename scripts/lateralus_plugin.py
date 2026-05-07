@@ -312,6 +312,14 @@ def _blocked(results: list[GitUpdateResult]) -> bool:
     return any(result.status == "blocked" for result in results)
 
 
+def _resolve_cli_paths(args: argparse.Namespace) -> tuple[Path, Path, Path]:
+    codex_home_path = args.codex_home.expanduser()
+    env = {**os.environ, "CODEX_HOME": str(codex_home_path)}
+    plugin_dir = (args.plugin_dir or default_plugin_dir(env)).expanduser()
+    marketplace_path = (args.marketplace_path or default_marketplace_path(env)).expanduser()
+    return plugin_dir, marketplace_path, codex_home_path
+
+
 def _update_source_and_caches(
     plugin_dir: Path,
     codex_home_path: Path,
@@ -334,8 +342,8 @@ def _update_source_and_caches(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install, check, and update the Lateralus Workflow Codex plugin.")
-    parser.add_argument("--plugin-dir", type=Path, default=default_plugin_dir())
-    parser.add_argument("--marketplace-path", type=Path, default=default_marketplace_path())
+    parser.add_argument("--plugin-dir", type=Path)
+    parser.add_argument("--marketplace-path", type=Path)
     parser.add_argument("--codex-home", type=Path, default=codex_home())
     parser.add_argument("--repo", default=DEFAULT_REPOSITORY_URL)
     parser.add_argument("--ref", default=DEFAULT_REF)
@@ -354,9 +362,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    plugin_dir = args.plugin_dir.expanduser()
-    marketplace_path = args.marketplace_path.expanduser()
-    codex_home_path = args.codex_home.expanduser()
+    plugin_dir, marketplace_path, codex_home_path = _resolve_cli_paths(args)
 
     try:
         if args.command == "install":
