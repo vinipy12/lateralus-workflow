@@ -25,6 +25,8 @@
   `context.delivery_contract` keeps greenfield/bootstrap work one-shot by default, `context.clarification_gate` records product-impacting clarification decisions before phase advance, and `current.comparison_diagnostic` keeps dogfood/user-provided comparison findings diagnostic unless the user made the baseline authoritative.
 - Ship-time repo-memory reconciliation is now landed for the latest kernel slice:
   `set-step-status ... shipped` records the PR handoff, Codex review status, and `STATE.md` reconciliation digest; `set-workflow-status complete` blocks if UAT, metrics, PR details, or `STATE.md` no longer match.
+- Final validation ownership is now landed for the latest kernel slice:
+  plans can declare `validation_ownership` for validation, docs, UAT, or release-alignment steps that must verify targets outside their edit ownership, and pre-review sensors treat that field as verification scope only.
 
 ## Product-Direction Lessons From Dogfood
 
@@ -114,16 +116,20 @@
 2. `set-workflow-status complete` validates workflow JSON state, passed UAT, `uat_passed` metrics, PR handoff details, and `STATE.md` digest before closing the workflow.
 3. `$ship` guidance now requires the handoff arguments and treats completion failures as reconciliation blockers.
 
+#### Final Validation Ownership: Landed
+
+1. Approved plans can declare `validation_ownership` for verification-only cross-step targets.
+2. Planning audits and plan comparisons flag undeclared verification targets outside `file_ownership`.
+3. Pre-review sensors allow verification targets covered by either `file_ownership` or `validation_ownership`, while edit scope remains limited to `file_ownership`.
+
 #### Remaining Slice Candidates
 
-1. Make final validation ownership explicit.
-   Steps whose purpose is validation, docs, UAT, or release alignment should be allowed to verify cross-step targets when the approved plan declares that ownership.
-2. Keep shrinking `tests/scripts/test_codex_workflow.py` where narrow kernel contracts are still mixed into integration coverage.
-3. Continue tightening the review loop against `code_review.md`.
+1. Keep shrinking `tests/scripts/test_codex_workflow.py` where narrow kernel contracts are still mixed into integration coverage.
+2. Continue tightening the review loop against `code_review.md`.
    The `agents_update_required` stale-guidance check is now mechanical; remaining work should focus on any review pass checks that are still prompt-only.
-4. Harden planning convergence and bootstrap contracts further if they still represent the highest residual kernel risk after more dogfood runs.
-5. Verify telemetry as a contract beyond the execution slice where needed, now that repeated failure and escalation categories are part of the harness contract.
-6. Keep full PR-stewardship state-machine work out of the next implementation slice until the kernel can reliably reach `ship_pending` and produce grounded PRs.
+3. Harden planning convergence and bootstrap contracts further if they still represent the highest residual kernel risk after more dogfood runs.
+4. Verify telemetry as a contract beyond the execution slice where needed, now that repeated failure and escalation categories are part of the harness contract.
+5. Keep full PR-stewardship state-machine work out of the next implementation slice until the kernel can reliably reach `ship_pending` and produce grounded PRs.
    The current `$ship` guidance can keep lightweight Codex-review babysitting, but persisted PR lifecycle states should wait.
 
 ### Milestone 2: Audit Completeness
@@ -165,7 +171,7 @@
 
 ## Milestone Completeness Snapshot
 
-- Milestone 1: about 75% complete. Router, planning-audit, review/UAT, telemetry, and execution-control escalation mechanics now have focused coverage. The main remaining kernel gaps are stale-guidance review enforcement plus convergence/bootstrap hardening if they remain the highest residual risk.
+- Milestone 1: about 80% complete. Router, planning-audit, review/UAT, telemetry, execution-control escalation, ship reconciliation, and final validation ownership mechanics now have focused coverage. The main remaining kernel gaps are review-loop tightening plus convergence/bootstrap hardening if they remain the highest residual risk.
 - Milestone 2: about 30% complete. Direct verification matrices and some approval explicitness exist, but broader audit explainability and brownfield/greenfield parity are still incomplete.
 - Milestone 3: about 30% complete. The plugin shape, alias trigger, bundled-script instructions, and local install/update helper exist, but clean-install validation across a fresh repo and release-channel semantics still need dogfood proof.
 - Milestone 4: about 0% complete. PR stewardship is product direction only; no current workflow state, schema, skill, or test contract supports it yet.

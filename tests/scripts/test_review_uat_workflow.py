@@ -215,6 +215,58 @@ def test_workflow_state_review_pending_accepts_dot_slash_prefixed_verification_p
     assert persisted_state["steps"][0]["status"] == "review_pending"
 
 
+def test_workflow_state_review_pending_accepts_validation_ownership_for_cross_step_target():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["steps"][0]["file_ownership"] = ["app/ai/embedding/service.py"]
+        state["steps"][0]["validation_ownership"] = ["tests/contracts/test_embedding_contract.py"]
+        state["steps"][0]["verification_targets"] = ["tests/contracts/test_embedding_contract.py"]
+        state["steps"][0]["verify_cmds"] = ["uv run pytest tests/contracts/test_embedding_contract.py"]
+        workflow_lib.save_state(state, state_path)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "review_pending",
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["workflow_status"] == "active"
+    assert persisted_state["escalation"] is None
+    assert persisted_state["steps"][0]["status"] == "review_pending"
+
+
+def test_workflow_state_review_pending_rejects_undeclared_cross_step_verification_target():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        state["steps"][0]["file_ownership"] = ["app/ai/embedding/service.py"]
+        state["steps"][0]["verification_targets"] = ["tests/contracts/test_embedding_contract.py"]
+        state["steps"][0]["verify_cmds"] = ["uv run pytest tests/contracts/test_embedding_contract.py"]
+        workflow_lib.save_state(state, state_path)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "review_pending",
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode != 0
+    assert "file or validation ownership" in result.stderr
+    assert persisted_state["workflow_status"] == "execution_escalated"
+    assert persisted_state["steps"][0]["status"] == "implementing"
+    assert persisted_state["escalation"]["code"] == "ownership_mismatch"
+
+
 def test_workflow_state_review_pending_rejects_malformed_verify_command_deterministically():
     workflow_lib = load_workflow_lib()
 

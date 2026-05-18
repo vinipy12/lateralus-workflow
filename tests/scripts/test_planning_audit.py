@@ -230,6 +230,75 @@ def test_direct_consumer_audit_honors_explicit_empty_matrix_row_without_fallback
     assert issues == []
 
 
+def test_plan_contract_accepts_declared_validation_ownership_for_cross_step_verification():
+    planning_lib = _load_planning_lib()
+    entry_point = "app/workflows/release_notes.py"
+    validation_target = "tests/workflows/test_release_regression.py"
+    plan_spec = _compatibility_plan_for(
+        entry_point,
+        verify_cmds=[f"uv run pytest {validation_target}"],
+    )
+    plan_spec["steps"][0]["avoid_touching"] = ["app/workflows/execution.py"]
+    plan_spec["steps"][0]["verification_targets"] = [validation_target]
+    plan_spec["steps"][0]["validation_ownership"] = [validation_target]
+
+    issues = planning_lib._audit_plan_contract(
+        plan_spec,
+        discovery={"current": {"entry_points": [], "pattern_anchors": []}},
+        scope_contract={"deferred": []},
+        architecture_constraints={"preserved_interfaces": []},
+    )
+
+    assert issues == []
+
+
+def test_plan_contract_normalizes_pytest_node_ids_for_validation_ownership():
+    planning_lib = _load_planning_lib()
+    entry_point = "app/workflows/release_notes.py"
+    validation_file = "tests/workflows/test_release_regression.py"
+    validation_node = f"{validation_file}::test_release_regression"
+    plan_spec = _compatibility_plan_for(
+        entry_point,
+        verify_cmds=[f"uv run pytest {validation_node}"],
+    )
+    plan_spec["steps"][0]["avoid_touching"] = ["app/workflows/execution.py"]
+    plan_spec["steps"][0]["verification_targets"] = [validation_node]
+    plan_spec["steps"][0]["validation_ownership"] = [validation_file]
+
+    issues = planning_lib._audit_plan_contract(
+        plan_spec,
+        discovery={"current": {"entry_points": [], "pattern_anchors": []}},
+        scope_contract={"deferred": []},
+        architecture_constraints={"preserved_interfaces": []},
+    )
+
+    assert issues == []
+
+
+def test_plan_contract_rejects_undeclared_cross_step_validation_target():
+    planning_lib = _load_planning_lib()
+    entry_point = "app/workflows/release_notes.py"
+    validation_target = "tests/workflows/test_release_regression.py"
+    plan_spec = _compatibility_plan_for(
+        entry_point,
+        verify_cmds=[f"uv run pytest {validation_target}"],
+    )
+    plan_spec["steps"][0]["avoid_touching"] = ["app/workflows/execution.py"]
+    plan_spec["steps"][0]["verification_targets"] = [validation_target]
+
+    issues = planning_lib._audit_plan_contract(
+        plan_spec,
+        discovery={"current": {"entry_points": [], "pattern_anchors": []}},
+        scope_contract={"deferred": []},
+        architecture_constraints={"preserved_interfaces": []},
+    )
+
+    assert issues == [
+        "step step-1 verifies targets outside file_ownership without validation_ownership: "
+        "tests/workflows/test_release_regression.py"
+    ]
+
+
 def test_direct_consumer_audit_rejects_matrix_without_entry_points():
     planning_lib = _load_planning_lib()
     entry_point = "app/integrations/reporting_adapter.py"

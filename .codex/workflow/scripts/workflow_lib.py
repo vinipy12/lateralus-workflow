@@ -741,6 +741,7 @@ def _validate_step(step: dict[str, Any]) -> None:
         "interfaces_to_preserve",
         "avoid_touching",
         "verification_targets",
+        "validation_ownership",
         "risk_flags",
         "blast_radius",
         "decision_ids",
@@ -888,6 +889,7 @@ def _normalize_plan_step(raw_step: dict[str, Any], *, index: int) -> dict[str, A
         "interfaces_to_preserve",
         "avoid_touching",
         "verification_targets",
+        "validation_ownership",
         "risk_flags",
         "blast_radius",
         "decision_ids",
@@ -1049,6 +1051,7 @@ def _validate_plan_step(
         "interfaces_to_preserve",
         "avoid_touching",
         "verification_targets",
+        "validation_ownership",
         "risk_flags",
         "blast_radius",
         "decision_ids",
@@ -1122,6 +1125,7 @@ def _validate_plan_step(
         "interfaces_to_preserve",
         "avoid_touching",
         "verification_targets",
+        "validation_ownership",
         "risk_flags",
         "blast_radius",
         "decision_ids",
@@ -1456,21 +1460,24 @@ def evaluate_pre_review_sensors(
             )
 
     ownership_paths = list(step.get("file_ownership", []))
-    if ownership_paths and verification_targets:
+    validation_ownership_paths = list(step.get("validation_ownership", []))
+    verification_scope_paths = ownership_paths + validation_ownership_paths
+    if verification_scope_paths and verification_targets:
         uncovered_targets = [
             target
             for target in verification_targets
-            if not _path_is_covered_by_any(target, ownership_paths)
+            if not _path_is_covered_by_any(target, verification_scope_paths)
         ]
         if uncovered_targets:
             failures.append(
                 _build_sensor_failure(
                     code="ownership_mismatch",
                     step=step,
-                    summary="verification targets fall outside the current step file ownership",
+                    summary="verification targets fall outside the current step file or validation ownership",
                     sensor="file_ownership",
                     details={
                         "file_ownership": ownership_paths,
+                        "validation_ownership": validation_ownership_paths,
                         "verification_targets": verification_targets,
                         "uncovered_targets": uncovered_targets,
                     },
@@ -1478,7 +1485,7 @@ def evaluate_pre_review_sensors(
             )
 
     required_agents_paths = infer_agents_paths(
-        list(step["context"]) + verification_targets + ownership_paths
+        list(step["context"]) + verification_targets + ownership_paths + validation_ownership_paths
     )
     missing_agents_paths = [
         path for path in required_agents_paths if path not in step["agents_paths"]
@@ -1725,6 +1732,10 @@ def _implementation_prompt(state: dict[str, Any], step: dict[str, Any], *, is_st
     interfaces_section = _optional_bullets("Interfaces to preserve", step.get("interfaces_to_preserve", []))
     avoid_touching_section = _optional_bullets("Avoid touching", step.get("avoid_touching", []))
     verification_targets_section = _optional_bullets("Verification targets", step.get("verification_targets", []))
+    validation_ownership_section = _optional_bullets(
+        "Validation ownership",
+        step.get("validation_ownership", []),
+    )
     risk_flags_section = _optional_bullets("Risk flags", step.get("risk_flags", []))
     blast_radius_section = _optional_bullets("Blast radius", step.get("blast_radius", []))
     decision_ids_section = _optional_bullets("Decision IDs", step.get("decision_ids", []))
@@ -1761,6 +1772,7 @@ def _implementation_prompt(state: dict[str, Any], step: dict[str, Any], *, is_st
         f"{avoid_touching_section}"
         f"Constraints:\n{constraints_lines}\n\n"
         f"{verification_targets_section}"
+        f"{validation_ownership_section}"
         f"{risk_flags_section}"
         f"{blast_radius_section}"
         f"{rollback_section}"
@@ -1838,6 +1850,10 @@ def _review_required_checks(step: dict[str, Any]) -> list[str]:
         "Review scope stayed inside the current execution step, recorded with --scope-confirmed true.",
         "Every required AGENTS.md path was checked and recorded with --agents-checked.",
     ]
+    if step.get("validation_ownership"):
+        checks.append(
+            "Cross-step verification stayed inside declared validation_ownership without editing outside file_ownership."
+        )
     if step.get("agents_update_required"):
         checks.append(
             "This step is marked agents_update_required; a passing review must use --agents-updated true."

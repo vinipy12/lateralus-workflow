@@ -90,10 +90,11 @@
         "Assume step 1 is already committed before this work starts."
       ],
       "done_when": [
-        "The requested behavior for step 2 works."
+        "The requested behavior for step 2 works.",
+        "The first slice still passes its regression coverage."
       ],
       "verify_cmds": [
-        "uv run pytest tests/example/test_second_module.py"
+        "uv run pytest tests/example/test_module.py tests/example/test_second_module.py"
       ],
       "agents_paths": [
         "AGENTS.md"
@@ -111,7 +112,11 @@
         "app/example/module.py"
       ],
       "verification_targets": [
+        "tests/example/test_module.py",
         "tests/example/test_second_module.py"
+      ],
+      "validation_ownership": [
+        "tests/example/test_module.py"
       ],
       "risk_flags": [
         "Step 1 behavior must remain intact after the follow-up slice."

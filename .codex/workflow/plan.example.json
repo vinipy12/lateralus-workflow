@@ -128,7 +128,11 @@
         "app/example/module.py"
       ],
       "verification_targets": [
+        "tests/example/test_module.py",
         "tests/example/test_second_module.py"
+      ],
+      "validation_ownership": [
+        "tests/example/test_module.py"
       ],
       "risk_flags": [
         "Step 1 behavior must remain intact after the follow-up slice."
@@ -156,10 +160,11 @@
       "agents_update_required": false,
       "done_when": [
         "The second slice works.",
+        "The first slice still passes its regression coverage.",
         "The follow-up targeted test passes."
       ],
       "verify_cmds": [
-        "uv run pytest tests/example/test_second_module.py"
+        "uv run pytest tests/example/test_module.py tests/example/test_second_module.py"
       ],
       "commit_message": "feature: land the follow-up slice"
     }

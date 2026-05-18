@@ -10,7 +10,7 @@ The workflow kernel currently includes:
 - repo-root project memory in `PROJECT.md`, `REQUIREMENTS.md`, and `STATE.md`
 - approval-time planning audits
 - explicit discovery-driven direct verification matrices via `current.direct_verification_matrix`
-- orchestration-ready plan metadata such as `depends_on`, `wave`, `file_ownership`, `rollback_notes`, `operational_watchpoints`, and `agents_update_required`
+- orchestration-ready plan metadata such as `depends_on`, `wave`, `file_ownership`, `validation_ownership`, `rollback_notes`, `operational_watchpoints`, and `agents_update_required`
 - stepwise execution with implement, review, fix, commit, UAT, and ship gates
 - repo-local UAT artifacts in `.codex/workflow/uat.json`
 - local telemetry artifacts in `.codex/workflow/metrics/events.jsonl` and `.codex/workflow/metrics/scorecard.json`
@@ -77,6 +77,8 @@ Planning reads repo memory from:
 - `STATE.md` for current initiative and delivery state
 
 For compatibility-sensitive discovery, `current.direct_verification_matrix` can map discovered entry points to the exact direct verification targets the approval audit should require. The audit uses that explicit mapping first and falls back to inferred test paths only when no matrix entry exists.
+
+Use `validation_ownership` for validation, docs, UAT, or release-alignment steps that must verify paths outside their edit ownership. It expands the step's verification scope only; `file_ownership` remains the edit boundary.
 
 ## Core Entrypoints
 
