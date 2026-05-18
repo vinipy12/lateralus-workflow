@@ -2763,9 +2763,20 @@ def _audit_step_validation_ownership(
 
 
 def _repo_path_covers(owner_path: str, target_path: str) -> bool:
-    owner = owner_path.rstrip("/")
-    target = target_path.rstrip("/")
+    owner = _normalize_repo_coverage_path(owner_path)
+    target = _normalize_repo_coverage_path(target_path)
     return owner == target or target.startswith(owner + "/")
+
+
+def _normalize_repo_coverage_path(value: str) -> str:
+    normalized = value.strip().rstrip("/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if "::" in normalized:
+        node_path, _ = normalized.split("::", 1)
+        if node_path.strip():
+            normalized = node_path.strip().rstrip("/")
+    return normalized
 
 
 def _repo_paths_overlap(left_path: str, right_path: str) -> bool:
