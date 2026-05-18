@@ -17,6 +17,7 @@ WORKFLOW_STATE_CLI_PATH = WORKFLOW_SCRIPTS_DIR / "workflow_state.py"
 METRICS_LIB_PATH = WORKFLOW_SCRIPTS_DIR / "metrics_lib.py"
 STATE_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "state.example.json"
 PLAN_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "plan.example.json"
+PLANNING_STATE_EXAMPLE_PATH = REPO_ROOT / ".codex" / "workflow" / "planning_state.example.json"
 
 
 if str(WORKFLOW_SCRIPTS_DIR) not in sys.path:
@@ -287,12 +288,67 @@ def write_supporting_planning_artifacts(
     )
 
 
+def rebase_planning_state_paths(state: dict, tmpdir: str) -> dict:
+    tmp_root = Path(tmpdir)
+    rebased = dict(state)
+    rebased["approved_plan_path"] = str(tmp_root / "approved-plan.json")
+    rebased["context_path"] = str(tmp_root / "context.json")
+    rebased["discovery_dossier_path"] = str(tmp_root / "discovery_dossier.json")
+    rebased["scope_contract_path"] = str(tmp_root / "scope_contract.json")
+    rebased["architecture_constraints_path"] = str(tmp_root / "architecture_constraints.json")
+    rebased["product_scope_audit_path"] = str(tmp_root / "product_scope_audit.json")
+    rebased["skeptic_audit_path"] = str(tmp_root / "skeptic_audit.json")
+    rebased["convergence_summary_path"] = str(tmp_root / "convergence_summary.json")
+    rebased["stack_runtime_decision_path"] = str(tmp_root / "stack_runtime_decision.json")
+    rebased["bootstrap_expectations_path"] = str(tmp_root / "bootstrap_expectations.json")
+    rebased["planning_trace_path"] = str(tmp_root / "planning_trace.json")
+    rebased["project_memory_path"] = str(tmp_root / "PROJECT.md")
+    rebased["requirements_memory_path"] = str(tmp_root / "REQUIREMENTS.md")
+    rebased["state_memory_path"] = str(tmp_root / "STATE.md")
+    return rebased
+
+
 def rebase_execution_state_paths(state: dict, tmpdir: str) -> dict:
     tmp_root = Path(tmpdir)
     rebased = deepcopy(state)
     rebased["uat_artifact_path"] = str(tmp_root / "uat.json")
     rebased["metrics_dir"] = str(tmp_root / "metrics")
     return rebased
+
+
+def write_greenfield_planning_artifacts(state: dict) -> None:
+    Path(state["stack_runtime_decision_path"]).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "feature_request": state["feature_request"],
+                "runtime_language_choice": "Python 3.13",
+                "framework_choice": "Repo-local CLI scripts",
+                "storage_choice": "JSON artifacts on disk",
+                "rationale": [
+                    "Match the existing workflow kernel runtime.",
+                    "Keep the bootstrap deterministic and auditable.",
+                ],
+                "unresolved_questions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    Path(state["bootstrap_expectations_path"]).write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "feature_request": state["feature_request"],
+                "ci_testing_baseline_expectations": [
+                    "Focused pytest coverage must exist before approval.",
+                ],
+                "deployment_release_baseline_expectations": [
+                    "Shipping must still go through the repo-local publish flow.",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def save_example_uat_artifact(
