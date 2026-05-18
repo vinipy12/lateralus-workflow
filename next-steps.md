@@ -4,7 +4,7 @@
 
 - Current checkout branch is `main`.
 - `python3 .codex/workflow/scripts/workflow_router.py status` reports no active workflow state.
-- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `126` tests.
+- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `139` tests.
 - `execution-start` now honors custom `--planning-state-path` and `--execution-state-path` pairs, so custom-path workflows get the same planning/execution guardrails as the default path.
 - Planning audits now support `current.direct_verification_matrix`, and the repo no longer relies on placeholder consumer-path test files to prove direct-consumer coverage.
 - Focused regression coverage now includes `tests/scripts/test_workflow_router_cli.py`, `tests/scripts/test_planning_audit.py`, `tests/scripts/test_review_uat_workflow.py`, and `tests/scripts/test_telemetry_contract.py` alongside a slimmer `tests/scripts/test_codex_workflow.py`.
@@ -27,6 +27,8 @@
   `set-step-status ... shipped` records the PR handoff, Codex review status, and `STATE.md` reconciliation digest; `set-workflow-status complete` blocks if UAT, metrics, PR details, or `STATE.md` no longer match.
 - Final validation ownership is now landed for the latest kernel slice:
   plans can declare `validation_ownership` for validation, docs, UAT, or release-alignment steps that must verify targets outside their edit ownership, and pre-review sensors treat that field as verification scope only.
+- Focused test decomposition is now started for the latest kernel slice:
+  plan evaluation and comparison contract tests moved out of `tests/scripts/test_codex_workflow.py` and into `tests/scripts/test_planning_audit.py`, keeping narrow planning-kernel checks closer to their owning module.
 
 ## Product-Direction Lessons From Dogfood
 
@@ -122,9 +124,15 @@
 2. Planning audits and plan comparisons flag undeclared verification targets outside `file_ownership`.
 3. Pre-review sensors allow verification targets covered by either `file_ownership` or `validation_ownership`, while edit scope remains limited to `file_ownership`.
 
+#### Focused Test Decomposition: Landed
+
+1. Plan comparison and `evaluate_plan_spec` contract tests now live in `tests/scripts/test_planning_audit.py`.
+2. `tests/scripts/test_codex_workflow.py` is smaller and remains focused on cross-subsystem integration and wrapper behavior.
+3. Full scripts regression remains green with `139` tests.
+
 #### Remaining Slice Candidates
 
-1. Keep shrinking `tests/scripts/test_codex_workflow.py` where narrow kernel contracts are still mixed into integration coverage.
+1. Continue shrinking `tests/scripts/test_codex_workflow.py` where narrow kernel contracts are still mixed into integration coverage.
 2. Continue tightening the review loop against `code_review.md`.
    The `agents_update_required` stale-guidance check is now mechanical; remaining work should focus on any review pass checks that are still prompt-only.
 3. Harden planning convergence and bootstrap contracts further if they still represent the highest residual kernel risk after more dogfood runs.
