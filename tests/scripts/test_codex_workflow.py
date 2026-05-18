@@ -559,6 +559,7 @@ def test_example_plan_builds_valid_state():
         "app/example/second_module.py",
         "tests/example/test_second_module.py",
     ]
+    assert state["steps"][1]["validation_ownership"] == ["tests/example/test_module.py"]
     assert state["uat_artifact_path"] == ".codex/workflow/uat.json"
     assert state["metrics_dir"] == ".codex/workflow/metrics"
 
@@ -621,7 +622,9 @@ def test_committed_step_advances_to_next_pending_step():
 
 def test_activation_prompt_renders_execution_handoff_fields():
     workflow_lib = _load_workflow_lib()
-    state = workflow_lib.build_state_from_plan_spec(_example_plan(), plan_path="PLANS.md")
+    plan = _example_plan()
+    plan["steps"][0]["validation_ownership"] = ["tests/ai/test_embedding_contract.py"]
+    state = workflow_lib.build_state_from_plan_spec(plan, plan_path="PLANS.md")
 
     prompt = workflow_lib.activation_prompt(state)
 
@@ -630,6 +633,7 @@ def test_activation_prompt_renders_execution_handoff_fields():
     assert "Interfaces to preserve:\n- Embedding service public behavior" in prompt
     assert "Avoid touching:\n- app/api/embedding.py" in prompt
     assert "Verification targets:\n- tests/ai/test_embedding_service.py" in prompt
+    assert "Validation ownership:\n- tests/ai/test_embedding_contract.py" in prompt
     assert "Risk flags:\n- Preserve existing embedding output shape for current consumers." in prompt
     assert "Blast radius:\n- app/ai/embedding/service.py consumers" in prompt
     assert "Decision IDs:\n- D-EMBED-1" in prompt

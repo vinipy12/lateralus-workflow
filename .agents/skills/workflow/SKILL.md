@@ -40,6 +40,7 @@ For a new feature request:
 8. Before approval, run `python3 scripts/planning_state.py audit-plan`.
 9. When the plan is ready, use `planning-approve` to transition into execution.
 10. When a step changes durable agent guidance, workflow conventions, or verification rules, set `agents_update_required: true` on that step and include the relevant `agents_paths`.
+11. When a validation, docs, UAT, or release-alignment step must verify targets outside its edit ownership, declare those paths in `validation_ownership`; this is verification scope only, not permission to edit outside `file_ownership`.
 
 For greenfield/bootstrap work:
 

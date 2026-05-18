@@ -782,6 +782,7 @@ def planning_activation_prompt(state: dict[str, Any], *, revision_mode: bool = F
         "- Feature plans must stay aligned with repo memory and must not re-introduce items listed as deferred scope.\n"
         "- Each step in the approved plan must include justification, files_read_first, interfaces_to_preserve, avoid_touching, and verification_targets.\n"
         "- Each step should declare wave, file ownership, dependency edges, and rollback/watchpoint notes when the blast radius warrants them.\n"
+        "- Use `validation_ownership` when a validation, docs, UAT, or release-alignment step must verify targets outside its edit ownership; this grants verification scope, not edit scope.\n"
         "- Set `agents_update_required: true` on any step that changes durable agent guidance, workflow conventions, or verification rules.\n"
         "- Execution now includes a UAT gate before ship and writes local telemetry under `.codex/workflow/metrics/`; plan the milestone so those artifacts stay auditable.\n"
         "- Any step that claims compatibility or verification across discovered entry points must include the "
@@ -1109,6 +1110,7 @@ def _audit_plan_contract(
         interfaces_to_preserve = _artifact_string_list(step.get("interfaces_to_preserve"))
         avoid_touching = _artifact_string_list(step.get("avoid_touching"))
         verification_targets = _artifact_string_list(step.get("verification_targets"))
+        validation_ownership = _artifact_string_list(step.get("validation_ownership"))
         risk_flags = _artifact_string_list(step.get("risk_flags"))
         blast_radius = _artifact_string_list(step.get("blast_radius"))
         depends_on = _artifact_string_list(step.get("depends_on"))
@@ -1150,6 +1152,14 @@ def _audit_plan_contract(
         for target in verification_targets:
             if not any(target in command for command in verify_cmds):
                 issues.append(f"step {step_id} verification target is not exercised by verify_cmds: {target}")
+        issues.extend(
+            _audit_step_validation_ownership(
+                step_id=step_id,
+                verification_targets=verification_targets,
+                file_ownership=file_ownership,
+                validation_ownership=validation_ownership,
+            )
+        )
 
         for path in planned_updates:
             if path in context_paths or path in known_entry_points or path.startswith("tests/"):
@@ -1280,6 +1290,10 @@ def evaluate_plan_spec(
             step.get("verification_targets", []),
             field_name=f"verification_targets for {step_id}",
         )
+        validation_ownership = _ensure_string_list(
+            step.get("validation_ownership", []),
+            field_name=f"validation_ownership for {step_id}",
+        )
         depends_on = _ensure_string_list(step.get("depends_on", []), field_name=f"depends_on for {step_id}")
         file_ownership = _ensure_string_list(
             step.get("file_ownership", []),
@@ -1366,6 +1380,7 @@ def evaluate_plan_spec(
                 "verification_targets_count": len(verification_targets),
                 "depends_on_count": len(depends_on),
                 "file_ownership_count": len(file_ownership),
+                "validation_ownership_count": len(validation_ownership),
                 "rollback_notes_count": len(rollback_notes),
                 "operational_watchpoints_count": len(operational_watchpoints),
                 "verify_targets": verify_targets,
@@ -1380,6 +1395,26 @@ def evaluate_plan_spec(
         step_dependencies=step_dependencies,
     )
     ownership_issues = _audit_parallel_file_ownership(wave_ownership)
+    validation_ownership_issues: list[str] = []
+    for index, step in enumerate(steps, start=1):
+        step_id = str(step.get("id") or f"step-{index}")
+        validation_ownership_issues.extend(
+            _audit_step_validation_ownership(
+                step_id=step_id,
+                verification_targets=_ensure_string_list(
+                    step.get("verification_targets", []),
+                    field_name=f"verification_targets for {step_id}",
+                ),
+                file_ownership=_ensure_string_list(
+                    step.get("file_ownership", []),
+                    field_name=f"file_ownership for {step_id}",
+                ),
+                validation_ownership=_ensure_string_list(
+                    step.get("validation_ownership", []),
+                    field_name=f"validation_ownership for {step_id}",
+                ),
+            )
+        )
     step_count = len(steps)
     divisor = step_count or 1
 
@@ -1415,6 +1450,8 @@ def evaluate_plan_spec(
     for issue in dependency_issues:
         warnings.append(issue)
     for issue in ownership_issues:
+        warnings.append(issue)
+    for issue in validation_ownership_issues:
         warnings.append(issue)
 
     return {
@@ -2700,6 +2737,29 @@ def _audit_parallel_file_ownership(
                         + ", ".join(conflicts)
                     )
     return issues
+
+
+def _audit_step_validation_ownership(
+    *,
+    step_id: str,
+    verification_targets: list[str],
+    file_ownership: list[str],
+    validation_ownership: list[str],
+) -> list[str]:
+    if not file_ownership or not verification_targets:
+        return []
+    declared_scope = file_ownership + validation_ownership
+    uncovered_targets = [
+        target
+        for target in verification_targets
+        if not any(_repo_path_covers(owner, target) for owner in declared_scope)
+    ]
+    if not uncovered_targets:
+        return []
+    return [
+        f"step {step_id} verifies targets outside file_ownership without validation_ownership: "
+        + ", ".join(uncovered_targets)
+    ]
 
 
 def _repo_path_covers(owner_path: str, target_path: str) -> bool:
