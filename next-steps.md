@@ -7,7 +7,7 @@
 - The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `139` tests.
 - `execution-start` now honors custom `--planning-state-path` and `--execution-state-path` pairs, so custom-path workflows get the same planning/execution guardrails as the default path.
 - Planning audits now support `current.direct_verification_matrix`, and the repo no longer relies on placeholder consumer-path test files to prove direct-consumer coverage.
-- Focused regression coverage now includes `tests/scripts/test_workflow_router_cli.py`, `tests/scripts/test_planning_audit.py`, `tests/scripts/test_plugin_surface.py`, `tests/scripts/test_review_uat_workflow.py`, and `tests/scripts/test_telemetry_contract.py` alongside a slimmer `tests/scripts/test_codex_workflow.py`.
+- Focused regression coverage now includes `tests/scripts/test_workflow_router_cli.py`, `tests/scripts/test_planning_audit.py`, `tests/scripts/test_plugin_surface.py`, `tests/scripts/test_workflow_hooks.py`, `tests/scripts/test_review_uat_workflow.py`, and `tests/scripts/test_telemetry_contract.py` alongside a slimmer `tests/scripts/test_codex_workflow.py`.
 - Review/UAT control-loop behavior and telemetry contracts are now first-class focused suites instead of assertions buried inside the monolith.
 - Execution control hardening is now landed for the current kernel slice:
   deterministic pre-review sensors gate `review_pending`, execution blockers move into explicit `execution_escalated` state with structured metadata, and scorecards now expose escalation categories plus repeated review/UAT loop counts.
@@ -28,7 +28,7 @@
 - Final validation ownership is now landed for the latest kernel slice:
   plans can declare `validation_ownership` for validation, docs, UAT, or release-alignment steps that must verify targets outside their edit ownership, and pre-review sensors treat that field as verification scope only.
 - Focused test decomposition is now started for the latest kernel slice:
-  plan evaluation and comparison contract tests moved out of `tests/scripts/test_codex_workflow.py` and into `tests/scripts/test_planning_audit.py`, while plugin/skill surface checks now live in `tests/scripts/test_plugin_surface.py`.
+  plan evaluation and comparison contract tests moved out of `tests/scripts/test_codex_workflow.py` and into `tests/scripts/test_planning_audit.py`, plugin/skill surface checks now live in `tests/scripts/test_plugin_surface.py`, and legacy hook entrypoint checks now live in `tests/scripts/test_workflow_hooks.py`.
   Narrow kernel checks are moving closer to their owning focused modules.
 
 ## Product-Direction Lessons From Dogfood
@@ -129,8 +129,9 @@
 
 1. Plan comparison and `evaluate_plan_spec` contract tests now live in `tests/scripts/test_planning_audit.py`.
 2. Plugin manifest, skill scaffolding, wrapper, and README/roadmap surface checks now live in `tests/scripts/test_plugin_surface.py`.
-3. `tests/scripts/test_codex_workflow.py` is smaller and remains focused on cross-subsystem integration and wrapper behavior.
-4. Full scripts regression remains green with `139` tests.
+3. Legacy user-prompt hook parsing and stop-hook escalation metrics now live in `tests/scripts/test_workflow_hooks.py`.
+4. `tests/scripts/test_codex_workflow.py` is smaller and remains focused on cross-subsystem integration and wrapper behavior.
+5. Full scripts regression remains green with `139` tests.
 
 #### Remaining Slice Candidates
 
