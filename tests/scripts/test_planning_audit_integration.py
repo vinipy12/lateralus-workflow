@@ -26,7 +26,7 @@ def _load_module(name: str, path: Path):
 
 
 def _load_planning_lib():
-    return _load_module("codex_planning_lib", PLANNING_LIB_PATH)
+    return _load_module("codex_planning_audit_integration_lib", PLANNING_LIB_PATH)
 
 
 def _example_plan() -> dict:
