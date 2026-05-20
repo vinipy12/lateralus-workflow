@@ -504,13 +504,13 @@ def test_workflow_state_commit_pending_rejects_pseudo_child_under_file_scope():
     assert "app/ai/embedding/service.py/not-real-child" in result.stderr
 
 
-def test_workflow_state_commit_pending_accepts_child_path_under_directory_scope():
+def test_workflow_state_commit_pending_rejects_pseudo_child_under_extensionless_file_scope():
     workflow_lib = load_workflow_lib()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
         state = workflow_lib.load_state(state_path)
-        state["steps"][0]["file_ownership"] = ["app/ai"]
+        state["steps"][0]["file_ownership"] = ["BUILD"]
         workflow_lib.save_state(state, state_path)
 
         result = run_workflow_state_command(
@@ -520,7 +520,59 @@ def test_workflow_state_commit_pending_accepts_child_path_under_directory_scope(
             "commit_pending",
             *_review_args(
                 summary="review passed",
-                scope_reviewed_paths=["app/ai/embedding/service.py"],
+                scope_reviewed_paths=["BUILD/not-real-child"],
+                finding_count=0,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "outside the step review scope" in result.stderr
+    assert "BUILD/not-real-child" in result.stderr
+
+
+def test_workflow_state_commit_pending_rejects_pseudo_child_under_dotfile_scope():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+        state = workflow_lib.load_state(state_path)
+        state["steps"][0]["file_ownership"] = [".env"]
+        workflow_lib.save_state(state, state_path)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="review passed",
+                scope_reviewed_paths=[".env/not-real-child"],
+                finding_count=0,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "outside the step review scope" in result.stderr
+    assert ".env/not-real-child" in result.stderr
+
+
+def test_workflow_state_commit_pending_accepts_child_path_under_directory_scope():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+        state = workflow_lib.load_state(state_path)
+        state["steps"][0]["file_ownership"] = [".codex/workflow"]
+        workflow_lib.save_state(state, state_path)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="review passed",
+                scope_reviewed_paths=[".codex/workflow/scripts/workflow_lib.py"],
                 finding_count=0,
             ),
         )

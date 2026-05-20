@@ -4,7 +4,7 @@
 
 - Current checkout branch is `kernel-review-scope-evidence`.
 - `python3 .codex/workflow/scripts/workflow_router.py status` reports no active workflow state.
-- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `147` tests.
+- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `149` tests.
 - `execution-start` now honors custom `--planning-state-path` and `--execution-state-path` pairs, so custom-path workflows get the same planning/execution guardrails as the default path.
 - Planning audits now support `current.direct_verification_matrix`, and the repo no longer relies on placeholder consumer-path test files to prove direct-consumer coverage.
 - Focused regression coverage now includes `tests/scripts/test_workflow_contract.py`, `tests/scripts/test_planning_lifecycle.py`, `tests/scripts/test_workflow_router_lifecycle.py`, `tests/scripts/test_workflow_router_cli.py`, `tests/scripts/test_planning_audit.py`, `tests/scripts/test_planning_audit_integration.py`, `tests/scripts/test_plugin_surface.py`, `tests/scripts/test_workflow_hooks.py`, `tests/scripts/test_review_uat_workflow.py`, and `tests/scripts/test_telemetry_contract.py`.
@@ -135,7 +135,7 @@
 6. Router planning/execution/resume lifecycle checks now live in `tests/scripts/test_workflow_router_lifecycle.py`.
 7. Compatibility-audit and repo-memory planning-audit integration checks now live in `tests/scripts/test_planning_audit_integration.py`.
 8. `tests/scripts/test_codex_workflow.py` has been retired.
-9. Full scripts regression remains green with `147` tests.
+9. Full scripts regression remains green with `149` tests.
 
 #### Review Loop Hardening: Started
 
