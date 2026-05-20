@@ -2325,7 +2325,9 @@ def _validate_review_record(review_record: Any, *, step: dict[str, Any]) -> None
         )
     allowed_scope_paths = _allowed_review_scope_paths(step)
     extra_scope_paths = [
-        path for path in scope_reviewed_paths if not _path_is_covered_by_any(path, allowed_scope_paths)
+        path
+        for path in scope_reviewed_paths
+        if not _review_scope_path_is_covered_by_any(path, allowed_scope_paths)
     ]
     if extra_scope_paths:
         raise ValueError(
@@ -2470,6 +2472,34 @@ def _build_sensor_failure(
 
 def _path_is_covered_by_any(path: str, candidates: list[str]) -> bool:
     return any(_path_is_covered(path, candidate) for candidate in candidates)
+
+
+def _review_scope_path_is_covered_by_any(path: str, candidates: list[str]) -> bool:
+    return any(_review_scope_path_is_covered(path, candidate) for candidate in candidates)
+
+
+def _review_scope_path_is_covered(path: str, candidate: str) -> bool:
+    normalized_path = _normalize_coverage_path(path)
+    normalized_candidate = _normalize_coverage_path(candidate)
+    if normalized_path == normalized_candidate:
+        return True
+    if not normalized_path.startswith(normalized_candidate + "/"):
+        return False
+    return _review_scope_candidate_allows_descendants(normalized_candidate)
+
+
+def _review_scope_candidate_allows_descendants(candidate: str) -> bool:
+    candidate_path = ROOT_DIR / candidate
+    if candidate_path.exists():
+        return candidate_path.is_dir()
+    return not _looks_like_file_scope(candidate)
+
+
+def _looks_like_file_scope(value: str) -> bool:
+    path = Path(value)
+    if path.suffix:
+        return True
+    return path.name in {"Dockerfile", "Makefile", "AGENTS", "README", "LICENSE", "NOTICE"}
 
 
 def _path_is_covered(path: str, candidate: str) -> bool:

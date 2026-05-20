@@ -481,6 +481,53 @@ def test_workflow_state_commit_pending_rejected_when_scope_reviewed_path_is_out_
     assert "app/unrelated/module.py" in result.stderr
 
 
+def test_workflow_state_commit_pending_rejects_pseudo_child_under_file_scope():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="review passed",
+                scope_reviewed_paths=["app/ai/embedding/service.py/not-real-child"],
+                finding_count=0,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "outside the step review scope" in result.stderr
+    assert "app/ai/embedding/service.py/not-real-child" in result.stderr
+
+
+def test_workflow_state_commit_pending_accepts_child_path_under_directory_scope():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+        state = workflow_lib.load_state(state_path)
+        state["steps"][0]["file_ownership"] = ["app/ai"]
+        workflow_lib.save_state(state, state_path)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="review passed",
+                scope_reviewed_paths=["app/ai/embedding/service.py"],
+                finding_count=0,
+            ),
+        )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_review_prompt_uses_agents_path_for_empty_step_scope_defaults():
     workflow_lib = load_workflow_lib()
     state = json.loads(STATE_EXAMPLE_PATH.read_text(encoding="utf-8"))
