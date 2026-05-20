@@ -56,6 +56,7 @@ def main() -> int:
         default=None,
     )
     step_parser.add_argument("--verification-note", default=None)
+    step_parser.add_argument("--verification-command", action="append", default=None)
     step_parser.add_argument("--agents-checked", action="append", default=None)
     step_parser.add_argument("--agents-updated", choices=("true", "false"), default=None)
     step_parser.add_argument("--finding-count", type=int, default=None)
@@ -141,6 +142,7 @@ def main() -> int:
             scope_confirmed=_parse_explicit_bool(args.scope_confirmed),
             verification_status=args.verification_status,
             verification_note=args.verification_note,
+            verification_commands=args.verification_command,
             agents_checked=args.agents_checked,
             agents_updated=_parse_explicit_bool(args.agents_updated),
             finding_count=args.finding_count,
@@ -418,6 +420,7 @@ def _emit_step_metrics(state: dict, step: dict, *, status: str) -> None:
                 "scope_confirmed": review_record["scope_confirmed"],
                 "verification_status": review_record["verification_status"],
                 "verification_note": review_record["verification_note"],
+                "verification_commands_count": len(review_record["verification_commands"]),
                 "agents_checked_count": len(review_record["agents_checked"]),
                 "agents_updated": review_record["agents_updated"],
                 "finding_count": review_record["finding_count"],

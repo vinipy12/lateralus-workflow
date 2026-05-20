@@ -36,6 +36,7 @@ def _review_args(
     summary: str,
     verification_status: str = "passed",
     verification_note: str | None = None,
+    verification_commands: list[str] | None = None,
     agents_checked: list[str] | None = None,
     agents_updated: bool = False,
     finding_count: int,
@@ -50,6 +51,10 @@ def _review_args(
     ]
     if verification_note is not None:
         args.extend(["--verification-note", verification_note])
+    if verification_commands is None and verification_status == "passed":
+        verification_commands = ["uv run pytest tests/ai/test_embedding_service.py"]
+    for command in verification_commands or []:
+        args.extend(["--verification-command", command])
     for path in agents_checked or ["AGENTS.md"]:
         args.extend(["--agents-checked", path])
     args.extend(
