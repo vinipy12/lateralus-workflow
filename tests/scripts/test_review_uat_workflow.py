@@ -481,6 +481,57 @@ def test_workflow_state_commit_pending_rejected_when_scope_reviewed_path_is_out_
     assert "app/unrelated/module.py" in result.stderr
 
 
+def test_review_prompt_uses_agents_path_for_empty_step_scope_defaults():
+    workflow_lib = load_workflow_lib()
+    state = json.loads(STATE_EXAMPLE_PATH.read_text(encoding="utf-8"))
+    step = state["steps"][0]
+    step["status"] = "review_pending"
+    step["context"] = []
+    step["verification_targets"] = []
+    step["file_ownership"] = []
+    step["validation_ownership"] = []
+    step["agents_paths"] = ["AGENTS.md"]
+
+    _, decision, changed = workflow_lib.next_stop_decision(deepcopy(state))
+
+    assert changed is False
+    assert decision.action == "block"
+    assert "--scope-reviewed-path AGENTS.md" in decision.prompt
+
+
+def test_legacy_review_record_backfills_agents_path_for_empty_step_scope_defaults():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        step = state["steps"][0]
+        step["context"] = []
+        step["verification_targets"] = []
+        step["file_ownership"] = []
+        step["validation_ownership"] = []
+        step["agents_paths"] = ["AGENTS.md"]
+        step["status"] = "commit_pending"
+        step["review_summary"] = "review passed"
+        step["review_record"] = {
+            "outcome": "passed",
+            "summary": "review passed",
+            "scope_confirmed": True,
+            "verification_status": "passed",
+            "verification_note": None,
+            "verification_commands": ["uv run pytest tests/ai/test_embedding_service.py"],
+            "agents_checked": ["AGENTS.md"],
+            "agents_updated": False,
+            "finding_count": 0,
+            "checked_at": "2026-01-01T00:00:00Z",
+        }
+        state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert persisted_state["steps"][0]["review_record"]["scope_reviewed_paths"] == ["AGENTS.md"]
+
+
 def test_workflow_state_commit_pending_rejected_when_verification_is_blocked():
     workflow_lib = load_workflow_lib()
 

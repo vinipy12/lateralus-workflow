@@ -2208,9 +2208,10 @@ def _default_scope_reviewed_paths(step: dict[str, Any]) -> list[str]:
     primary_scope = list(step.get("file_ownership", [])) + list(step.get("validation_ownership", []))
     if primary_scope:
         return _unique_preserving_order(primary_scope)
-    return _unique_preserving_order(
-        list(step.get("verification_targets", [])) + list(step.get("context", []))
-    )
+    secondary_scope = list(step.get("verification_targets", [])) + list(step.get("context", []))
+    if secondary_scope:
+        return _unique_preserving_order(secondary_scope)
+    return _unique_preserving_order(list(step.get("agents_paths", [])) or ["AGENTS.md"])
 
 
 def _allowed_review_scope_paths(step: dict[str, Any]) -> list[str]:
@@ -2218,7 +2219,7 @@ def _allowed_review_scope_paths(step: dict[str, Any]) -> list[str]:
         list(step.get("file_ownership", []))
         + list(step.get("validation_ownership", []))
         + list(step.get("verification_targets", []))
-        + list(step.get("agents_paths", []))
+        + (list(step.get("agents_paths", [])) or ["AGENTS.md"])
         + list(step.get("context", []))
     )
     return _unique_preserving_order(allowed)
