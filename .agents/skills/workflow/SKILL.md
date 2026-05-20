@@ -66,7 +66,7 @@ For an active execution workflow:
    - Development ends only when the current step reaches `committed`.
    - `set-step-status ... review_pending` runs deterministic pre-review sensors before inferential review.
    - Review is a hard gate before commit; do not bypass it.
-   - Record review outcomes inline on `set-step-status ... fix_pending|commit_pending` with `--review-summary`, `--scope-confirmed true|false`, `--verification-status passed|blocked`, repeatable `--verification-command` for every command that ran when verification passed, `--verification-note` when blocked, repeatable `--agents-checked`, `--agents-updated true|false`, and `--finding-count <n>`.
+   - Record review outcomes inline on `set-step-status ... fix_pending|commit_pending` with `--review-summary`, `--scope-confirmed true|false`, repeatable `--scope-reviewed-path` for reviewed step-owned paths, `--verification-status passed|blocked`, repeatable `--verification-command` for every command that ran when verification passed, `--verification-note` when blocked, repeatable `--agents-checked`, `--agents-updated true|false`, and `--finding-count <n>`.
    - If the current step has `agents_update_required: true`, a passing review must record `--agents-updated true`; stale durable guidance remains a material finding until then.
    - Deployment begins only after UAT moves the workflow to `ship_pending`.
 3. Use `python3 scripts/workflow_state.py` only for step-status updates during implementation, review, commit, and ship.

@@ -1206,6 +1206,14 @@ def _normalize_state_compat(state: Any, path: Path) -> dict[str, Any]:
                     else []
                 )
                 normalized_step["review_record"] = review_record
+            if isinstance(review_record, dict) and "scope_reviewed_paths" not in review_record:
+                review_record = dict(review_record)
+                review_record["scope_reviewed_paths"] = (
+                    _default_scope_reviewed_paths(normalized_step)
+                    if review_record.get("scope_confirmed") is True
+                    else []
+                )
+                normalized_step["review_record"] = review_record
             normalized_steps.append(normalized_step)
         normalized["steps"] = normalized_steps
     return normalized
@@ -1234,6 +1242,14 @@ def _ensure_agents_paths(value: Any, *, field_name: str) -> list[str]:
     return normalized
 
 
+def _ensure_repo_relative_paths(value: Any, *, field_name: str) -> list[str]:
+    items = _ensure_string_list(value, field_name=field_name)
+    normalized = [_normalize_repo_relative_path(item, field_name=field_name) for item in items]
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"{field_name} must not contain duplicates")
+    return normalized
+
+
 def canonical_review_summary(step: dict[str, Any]) -> str | None:
     review_record = step.get("review_record")
     if isinstance(review_record, dict):
@@ -1252,6 +1268,7 @@ def build_review_record_for_status(
     new_status: str,
     review_summary: str | None,
     scope_confirmed: bool | None,
+    scope_reviewed_paths: list[str] | None,
     verification_status: str | None,
     verification_note: str | None,
     verification_commands: list[str] | None,
@@ -1269,6 +1286,19 @@ def build_review_record_for_status(
         errors.append(f"set-step-status {new_status} requires --review-summary")
     if scope_confirmed is None:
         errors.append(f"set-step-status {new_status} requires --scope-confirmed true|false")
+    normalized_scope_reviewed_paths: list[str] = []
+    try:
+        normalized_scope_reviewed_paths = _ensure_repo_relative_paths(
+            scope_reviewed_paths,
+            field_name=f"review_record.scope_reviewed_paths for {step['id']}",
+        )
+    except ValueError as exc:
+        errors.append(str(exc))
+    if scope_confirmed is True and not normalized_scope_reviewed_paths:
+        errors.append(
+            f"set-step-status {new_status} requires at least one --scope-reviewed-path "
+            "when --scope-confirmed true"
+        )
     if verification_status is None:
         errors.append(
             f"set-step-status {new_status} requires --verification-status passed|blocked"
@@ -1313,6 +1343,7 @@ def build_review_record_for_status(
         "outcome": "passed" if new_status == "commit_pending" else "failed",
         "summary": summary,
         "scope_confirmed": scope_confirmed,
+        "scope_reviewed_paths": normalized_scope_reviewed_paths,
         "verification_status": verification_status,
         "verification_note": note,
         "verification_commands": normalized_verification_commands,
@@ -1856,7 +1887,7 @@ def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         "- Findings first, ordered by severity.\n"
         "- Focus on bugs, regressions, risky behavior, stale AGENTS guidance, and missing verification.\n"
         "- Do not pad with style-only feedback.\n"
-        "- Record scope confirmation for the current step.\n"
+        "- Record scope confirmation and every reviewed path for the current step.\n"
         "- Record whether verification passed or is blocked, every verification command that ran, and the blocker note when blocked.\n"
         "- Record every `AGENTS.md` file checked, whether any required updates were made, and the material finding count.\n\n"
         f"Required checks before pass:\n{required_checks_lines}\n\n"
@@ -1874,7 +1905,7 @@ def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
 def _review_required_checks(step: dict[str, Any]) -> list[str]:
     checks = [
         "Relevant verification commands ran and are recorded with --verification-command, or the blocker is recorded with --verification-status blocked and --verification-note.",
-        "Review scope stayed inside the current execution step, recorded with --scope-confirmed true.",
+        "Review scope stayed inside the current execution step, recorded with --scope-confirmed true and --scope-reviewed-path.",
         "Every required AGENTS.md path was checked and recorded with --agents-checked.",
     ]
     if step.get("validation_ownership"):
@@ -1924,9 +1955,15 @@ def _review_status_command(
         shlex.quote(review_summary),
         "--scope-confirmed",
         "true",
-        "--verification-status",
-        verification_status,
     ]
+    for path in _default_scope_reviewed_paths(step):
+        command.extend(["--scope-reviewed-path", shlex.quote(path)])
+    command.extend(
+        [
+            "--verification-status",
+            verification_status,
+        ]
+    )
     if verification_note is not None:
         command.extend(["--verification-note", shlex.quote(verification_note)])
     if verification_status == "passed":
@@ -2167,6 +2204,26 @@ def _extract_verify_targets(commands: list[str]) -> list[str]:
     return _unique_preserving_order(targets)
 
 
+def _default_scope_reviewed_paths(step: dict[str, Any]) -> list[str]:
+    primary_scope = list(step.get("file_ownership", [])) + list(step.get("validation_ownership", []))
+    if primary_scope:
+        return _unique_preserving_order(primary_scope)
+    return _unique_preserving_order(
+        list(step.get("verification_targets", [])) + list(step.get("context", []))
+    )
+
+
+def _allowed_review_scope_paths(step: dict[str, Any]) -> list[str]:
+    allowed = (
+        list(step.get("file_ownership", []))
+        + list(step.get("validation_ownership", []))
+        + list(step.get("verification_targets", []))
+        + list(step.get("agents_paths", []))
+        + list(step.get("context", []))
+    )
+    return _unique_preserving_order(allowed)
+
+
 def _is_positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
@@ -2236,6 +2293,7 @@ def _validate_review_record(review_record: Any, *, step: dict[str, Any]) -> None
         "outcome",
         "summary",
         "scope_confirmed",
+        "scope_reviewed_paths",
         "verification_status",
         "verification_note",
         "verification_commands",
@@ -2256,6 +2314,23 @@ def _validate_review_record(review_record: Any, *, step: dict[str, Any]) -> None
     scope_confirmed = review_record["scope_confirmed"]
     if not isinstance(scope_confirmed, bool):
         raise ValueError(f"review_record.scope_confirmed must be a boolean for {step['id']}")
+    scope_reviewed_paths = _ensure_repo_relative_paths(
+        review_record["scope_reviewed_paths"],
+        field_name=f"review_record.scope_reviewed_paths for {step['id']}",
+    )
+    if scope_confirmed and not scope_reviewed_paths:
+        raise ValueError(
+            f"review_record.scope_reviewed_paths is required when scope_confirmed is true for {step['id']}"
+        )
+    allowed_scope_paths = _allowed_review_scope_paths(step)
+    extra_scope_paths = [
+        path for path in scope_reviewed_paths if not _path_is_covered_by_any(path, allowed_scope_paths)
+    ]
+    if extra_scope_paths:
+        raise ValueError(
+            "review_record.scope_reviewed_paths contains paths outside the step review scope for "
+            f"{step['id']}: {', '.join(extra_scope_paths)}"
+        )
     verification_status = review_record["verification_status"]
     if verification_status not in VALID_REVIEW_VERIFICATION_STATUSES:
         raise ValueError(

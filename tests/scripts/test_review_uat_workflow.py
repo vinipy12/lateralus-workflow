@@ -33,6 +33,7 @@ def _review_args(
     *,
     summary: str,
     scope_confirmed: bool = True,
+    scope_reviewed_paths: list[str] | None = None,
     verification_status: str = "passed",
     verification_note: str | None = None,
     verification_commands: list[str] | None = None,
@@ -45,9 +46,15 @@ def _review_args(
         summary,
         "--scope-confirmed",
         "true" if scope_confirmed else "false",
-        "--verification-status",
-        verification_status,
     ]
+    if scope_reviewed_paths is None and scope_confirmed:
+        scope_reviewed_paths = [
+            "app/ai/embedding/service.py",
+            "tests/ai/test_embedding_service.py",
+        ]
+    for path in scope_reviewed_paths or []:
+        args.extend(["--scope-reviewed-path", path])
+    args.extend(["--verification-status", verification_status])
     if verification_note is not None:
         args.extend(["--verification-note", verification_note])
     if verification_commands is None and verification_status == "passed":
@@ -125,6 +132,7 @@ def test_review_pending_step_blocks_for_review_gate():
     assert "code_review.md" in decision.prompt
     assert "python3 .codex/workflow/scripts/workflow_state.py set-step-status step-1 commit_pending" in decision.prompt
     assert "--scope-confirmed true" in decision.prompt
+    assert "--scope-reviewed-path app/example/module.py" in decision.prompt
     assert "--verification-command 'uv run pytest tests/example/test_module.py'" in decision.prompt
     assert "--agents-checked AGENTS.md" in decision.prompt
     assert "--finding-count 0" in decision.prompt
@@ -428,6 +436,51 @@ def test_workflow_state_commit_pending_rejected_when_scope_is_not_confirmed():
     assert "--scope-confirmed true" in result.stderr
 
 
+def test_workflow_state_commit_pending_rejected_without_scope_reviewed_path():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="review passed",
+                scope_reviewed_paths=[],
+                finding_count=0,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "--scope-reviewed-path" in result.stderr
+
+
+def test_workflow_state_commit_pending_rejected_when_scope_reviewed_path_is_out_of_scope():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="review passed",
+                scope_reviewed_paths=["app/unrelated/module.py"],
+                finding_count=0,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "outside the step review scope" in result.stderr
+    assert "app/unrelated/module.py" in result.stderr
+
+
 def test_workflow_state_commit_pending_rejected_when_verification_is_blocked():
     workflow_lib = load_workflow_lib()
 
@@ -641,6 +694,10 @@ def test_workflow_state_fix_pending_persists_review_record():
     assert review_record["outcome"] == "failed"
     assert review_record["summary"] == "Missing regression assertion."
     assert review_record["scope_confirmed"] is True
+    assert review_record["scope_reviewed_paths"] == [
+        "app/ai/embedding/service.py",
+        "tests/ai/test_embedding_service.py",
+    ]
     assert review_record["verification_status"] == "passed"
     assert review_record["verification_note"] is None
     assert review_record["verification_commands"] == ["uv run pytest tests/ai/test_embedding_service.py"]
@@ -670,6 +727,10 @@ def test_workflow_state_commit_pending_persists_review_record():
     assert persisted_state["steps"][0]["status"] == "commit_pending"
     assert review_record["outcome"] == "passed"
     assert review_record["finding_count"] == 0
+    assert review_record["scope_reviewed_paths"] == [
+        "app/ai/embedding/service.py",
+        "tests/ai/test_embedding_service.py",
+    ]
     assert review_record["verification_status"] == "passed"
     assert review_record["verification_commands"] == ["uv run pytest tests/ai/test_embedding_service.py"]
 
