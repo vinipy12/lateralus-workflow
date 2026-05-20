@@ -50,6 +50,7 @@ def main() -> int:
     step_parser.add_argument("status", choices=sorted(VALID_STEP_STATUSES))
     step_parser.add_argument("--review-summary", default=None)
     step_parser.add_argument("--scope-confirmed", choices=("true", "false"), default=None)
+    step_parser.add_argument("--scope-reviewed-path", action="append", default=None)
     step_parser.add_argument(
         "--verification-status",
         choices=sorted(VALID_REVIEW_VERIFICATION_STATUSES),
@@ -140,6 +141,7 @@ def main() -> int:
             new_status=args.status,
             review_summary=args.review_summary,
             scope_confirmed=_parse_explicit_bool(args.scope_confirmed),
+            scope_reviewed_paths=args.scope_reviewed_path,
             verification_status=args.verification_status,
             verification_note=args.verification_note,
             verification_commands=args.verification_command,
@@ -418,6 +420,7 @@ def _emit_step_metrics(state: dict, step: dict, *, status: str) -> None:
         details.update(
             {
                 "scope_confirmed": review_record["scope_confirmed"],
+                "scope_reviewed_paths_count": len(review_record["scope_reviewed_paths"]),
                 "verification_status": review_record["verification_status"],
                 "verification_note": review_record["verification_note"],
                 "verification_commands_count": len(review_record["verification_commands"]),

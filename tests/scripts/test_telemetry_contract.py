@@ -34,6 +34,7 @@ def _build_execution_state(workflow_lib, tmpdir: str) -> dict:
 def _review_args(
     *,
     summary: str,
+    scope_reviewed_paths: list[str] | None = None,
     verification_status: str = "passed",
     verification_note: str | None = None,
     verification_commands: list[str] | None = None,
@@ -46,9 +47,15 @@ def _review_args(
         summary,
         "--scope-confirmed",
         "true",
-        "--verification-status",
-        verification_status,
     ]
+    if scope_reviewed_paths is None:
+        scope_reviewed_paths = [
+            "app/ai/embedding/service.py",
+            "tests/ai/test_embedding_service.py",
+        ]
+    for path in scope_reviewed_paths:
+        args.extend(["--scope-reviewed-path", path])
+    args.extend(["--verification-status", verification_status])
     if verification_note is not None:
         args.extend(["--verification-note", verification_note])
     if verification_commands is None and verification_status == "passed":

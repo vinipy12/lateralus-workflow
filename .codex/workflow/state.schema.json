@@ -433,6 +433,7 @@
               "outcome",
               "summary",
               "scope_confirmed",
+              "scope_reviewed_paths",
               "verification_status",
               "verification_note",
               "verification_commands",
@@ -456,6 +457,13 @@
               },
               "scope_confirmed": {
                 "type": "boolean"
+              },
+              "scope_reviewed_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               },
               "verification_status": {
                 "type": "string",
