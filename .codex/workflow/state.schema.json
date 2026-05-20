@@ -435,6 +435,7 @@
               "scope_confirmed",
               "verification_status",
               "verification_note",
+              "verification_commands",
               "agents_checked",
               "agents_updated",
               "finding_count",
@@ -468,6 +469,13 @@
                   "string",
                   "null"
                 ]
+              },
+              "verification_commands": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               },
               "agents_checked": {
                 "type": "array",

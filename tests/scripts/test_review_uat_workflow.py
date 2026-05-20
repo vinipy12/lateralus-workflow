@@ -35,6 +35,7 @@ def _review_args(
     scope_confirmed: bool = True,
     verification_status: str = "passed",
     verification_note: str | None = None,
+    verification_commands: list[str] | None = None,
     agents_checked: list[str] | None = None,
     agents_updated: bool = False,
     finding_count: int,
@@ -49,6 +50,10 @@ def _review_args(
     ]
     if verification_note is not None:
         args.extend(["--verification-note", verification_note])
+    if verification_commands is None and verification_status == "passed":
+        verification_commands = ["uv run pytest tests/ai/test_embedding_service.py"]
+    for command in verification_commands or []:
+        args.extend(["--verification-command", command])
     for path in agents_checked or ["AGENTS.md"]:
         args.extend(["--agents-checked", path])
     args.extend(
@@ -120,6 +125,7 @@ def test_review_pending_step_blocks_for_review_gate():
     assert "code_review.md" in decision.prompt
     assert "python3 .codex/workflow/scripts/workflow_state.py set-step-status step-1 commit_pending" in decision.prompt
     assert "--scope-confirmed true" in decision.prompt
+    assert "--verification-command 'uv run pytest tests/example/test_module.py'" in decision.prompt
     assert "--agents-checked AGENTS.md" in decision.prompt
     assert "--finding-count 0" in decision.prompt
 
@@ -445,6 +451,51 @@ def test_workflow_state_commit_pending_rejected_when_verification_is_blocked():
     assert "--verification-status passed" in result.stderr
 
 
+def test_workflow_state_commit_pending_rejected_without_verification_command_evidence():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="review passed",
+                verification_commands=[],
+                finding_count=0,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "--verification-command" in result.stderr
+
+
+def test_workflow_state_commit_pending_rejected_when_verification_command_omits_verify_cmd():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="review passed",
+                verification_commands=["uv run pytest tests/other.py"],
+                finding_count=0,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "must include every verify_cmd" in result.stderr
+    assert "uv run pytest tests/ai/test_embedding_service.py" in result.stderr
+
+
 def test_workflow_state_commit_pending_rejected_when_agents_checked_omit_required_path():
     workflow_lib = load_workflow_lib()
 
@@ -592,6 +643,7 @@ def test_workflow_state_fix_pending_persists_review_record():
     assert review_record["scope_confirmed"] is True
     assert review_record["verification_status"] == "passed"
     assert review_record["verification_note"] is None
+    assert review_record["verification_commands"] == ["uv run pytest tests/ai/test_embedding_service.py"]
     assert review_record["agents_checked"] == ["AGENTS.md"]
     assert review_record["agents_updated"] is False
     assert review_record["finding_count"] == 2
@@ -619,6 +671,7 @@ def test_workflow_state_commit_pending_persists_review_record():
     assert review_record["outcome"] == "passed"
     assert review_record["finding_count"] == 0
     assert review_record["verification_status"] == "passed"
+    assert review_record["verification_commands"] == ["uv run pytest tests/ai/test_embedding_service.py"]
 
 
 def test_workflow_state_review_summary_compatibility_remains_intact():

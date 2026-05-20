@@ -1190,12 +1190,24 @@ def _normalize_state_compat(state: Any, path: Path) -> dict[str, Any]:
     normalized.setdefault("ship_record", None)
     steps = normalized.get("steps")
     if isinstance(steps, list):
-        normalized["steps"] = [
-            {**step, "review_record": step.get("review_record")}
-            if isinstance(step, dict)
-            else step
-            for step in steps
-        ]
+        normalized_steps = []
+        for step in steps:
+            if not isinstance(step, dict):
+                normalized_steps.append(step)
+                continue
+            normalized_step = {**step, "review_record": step.get("review_record")}
+            review_record = normalized_step["review_record"]
+            if isinstance(review_record, dict) and "verification_commands" not in review_record:
+                verification_status = review_record.get("verification_status")
+                review_record = dict(review_record)
+                review_record["verification_commands"] = (
+                    list(normalized_step.get("verify_cmds", []))
+                    if verification_status == "passed"
+                    else []
+                )
+                normalized_step["review_record"] = review_record
+            normalized_steps.append(normalized_step)
+        normalized["steps"] = normalized_steps
     return normalized
 
 
@@ -1242,6 +1254,7 @@ def build_review_record_for_status(
     scope_confirmed: bool | None,
     verification_status: str | None,
     verification_note: str | None,
+    verification_commands: list[str] | None,
     agents_checked: list[str] | None,
     agents_updated: bool | None,
     finding_count: int | None,
@@ -1271,6 +1284,19 @@ def build_review_record_for_status(
         errors.append(
             f"set-step-status {new_status} requires --verification-note when --verification-status blocked"
         )
+    normalized_verification_commands: list[str] = []
+    try:
+        normalized_verification_commands = _ensure_string_list(
+            verification_commands,
+            field_name=f"review_record.verification_commands for {step['id']}",
+        )
+    except ValueError as exc:
+        errors.append(str(exc))
+    if verification_status == "passed" and not normalized_verification_commands:
+        errors.append(
+            f"set-step-status {new_status} requires at least one --verification-command "
+            "when --verification-status passed"
+        )
     if errors:
         return None, errors
 
@@ -1289,6 +1315,7 @@ def build_review_record_for_status(
         "scope_confirmed": scope_confirmed,
         "verification_status": verification_status,
         "verification_note": note,
+        "verification_commands": normalized_verification_commands,
         "agents_checked": normalized_agents_checked,
         "agents_updated": agents_updated,
         "finding_count": finding_count,
@@ -1830,7 +1857,7 @@ def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         "- Focus on bugs, regressions, risky behavior, stale AGENTS guidance, and missing verification.\n"
         "- Do not pad with style-only feedback.\n"
         "- Record scope confirmation for the current step.\n"
-        "- Record whether verification passed or is blocked, and include the blocker note when blocked.\n"
+        "- Record whether verification passed or is blocked, every verification command that ran, and the blocker note when blocked.\n"
         "- Record every `AGENTS.md` file checked, whether any required updates were made, and the material finding count.\n\n"
         f"Required checks before pass:\n{required_checks_lines}\n\n"
         "If you find issues:\n"
@@ -1846,7 +1873,7 @@ def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
 
 def _review_required_checks(step: dict[str, Any]) -> list[str]:
     checks = [
-        "Relevant verification commands ran, or the blocker is recorded with --verification-status blocked and --verification-note.",
+        "Relevant verification commands ran and are recorded with --verification-command, or the blocker is recorded with --verification-status blocked and --verification-note.",
         "Review scope stayed inside the current execution step, recorded with --scope-confirmed true.",
         "Every required AGENTS.md path was checked and recorded with --agents-checked.",
     ]
@@ -1902,6 +1929,9 @@ def _review_status_command(
     ]
     if verification_note is not None:
         command.extend(["--verification-note", shlex.quote(verification_note)])
+    if verification_status == "passed":
+        for verify_cmd in step["verify_cmds"]:
+            command.extend(["--verification-command", shlex.quote(verify_cmd)])
     for path in step["agents_paths"]:
         command.extend(["--agents-checked", shlex.quote(path)])
     command.extend(
@@ -2208,6 +2238,7 @@ def _validate_review_record(review_record: Any, *, step: dict[str, Any]) -> None
         "scope_confirmed",
         "verification_status",
         "verification_note",
+        "verification_commands",
         "agents_checked",
         "agents_updated",
         "finding_count",
@@ -2241,6 +2272,24 @@ def _validate_review_record(review_record: Any, *, step: dict[str, Any]) -> None
         raise ValueError(
             f"review_record.verification_note is required when verification_status is blocked for {step['id']}"
         )
+    verification_commands = _ensure_string_list(
+        review_record["verification_commands"],
+        field_name=f"review_record.verification_commands for {step['id']}",
+    )
+    if verification_status == "passed":
+        if not verification_commands:
+            raise ValueError(
+                "review_record.verification_commands is required when verification_status "
+                f"is passed for {step['id']}"
+            )
+        missing_verify_cmds = [
+            command for command in step["verify_cmds"] if command not in verification_commands
+        ]
+        if missing_verify_cmds:
+            raise ValueError(
+                "review_record.verification_commands must include every verify_cmd for "
+                f"{step['id']}: {', '.join(missing_verify_cmds)}"
+            )
     agents_checked = _ensure_agents_paths(
         review_record["agents_checked"],
         field_name=f"review_record.agents_checked for {step['id']}",
