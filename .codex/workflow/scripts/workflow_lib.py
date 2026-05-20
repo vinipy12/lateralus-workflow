@@ -52,6 +52,7 @@ VALID_UAT_STATUSES = {"pending", "passed", "failed_gap", "failed_replan"}
 UAT_METRIC_EVENTS = {"uat_passed", "uat_failed_gap", "uat_failed_replan"}
 VALID_REVIEW_OUTCOMES = {"pending", "passed", "failed"}
 VALID_REVIEW_VERIFICATION_STATUSES = {"passed", "blocked"}
+VALID_REVIEW_FINDING_SEVERITIES = {"P0", "P1", "P2", "P3"}
 VALID_SHIP_CODEX_REVIEW_STATUSES = {"clean", "not_requested"}
 VALID_SHIP_STATE_MEMORY_STATUSES = {"updated", "verified"}
 VALID_ESCALATION_CODES = {
@@ -1214,6 +1215,10 @@ def _normalize_state_compat(state: Any, path: Path) -> dict[str, Any]:
                     else []
                 )
                 normalized_step["review_record"] = review_record
+            if isinstance(review_record, dict) and "findings" not in review_record:
+                review_record = dict(review_record)
+                review_record["findings"] = _legacy_review_findings_for_record(review_record)
+                normalized_step["review_record"] = review_record
             normalized_steps.append(normalized_step)
         normalized["steps"] = normalized_steps
     return normalized
@@ -1250,6 +1255,120 @@ def _ensure_repo_relative_paths(value: Any, *, field_name: str) -> list[str]:
     return normalized
 
 
+def _parse_review_finding_flags(
+    values: list[str] | None,
+    *,
+    step: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if values is None:
+        return []
+    findings: list[dict[str, Any]] = []
+    for index, value in enumerate(values, start=1):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"--review-finding entry {index} must be a JSON object: {exc.msg}"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"--review-finding entry {index} must be a JSON object")
+        findings.append(parsed)
+    return _normalize_review_findings(
+        findings,
+        step=step,
+        field_name="review_record.findings",
+    )
+
+
+def _legacy_review_findings_for_record(review_record: dict[str, Any]) -> list[dict[str, Any]]:
+    if review_record.get("outcome") != "failed":
+        return []
+    finding_count = review_record.get("finding_count")
+    if not isinstance(finding_count, int) or isinstance(finding_count, bool) or finding_count <= 0:
+        return []
+    summary = _normalize_optional_text(review_record.get("summary")) or "legacy review finding"
+    return [
+        {
+            "severity": "P2",
+            "summary": summary,
+            "no_path_reason": "legacy review record predates structured finding evidence",
+        }
+        for _ in range(finding_count)
+    ]
+
+
+def _normalize_review_findings(
+    value: Any,
+    *,
+    step: dict[str, Any],
+    field_name: str,
+) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list")
+    allowed_scope_paths = _allowed_review_scope_paths(step)
+    normalized: list[dict[str, Any]] = []
+    severity_ranks: list[int] = []
+    for index, finding in enumerate(value, start=1):
+        if not isinstance(finding, dict):
+            raise ValueError(f"{field_name}[{index}] must be an object")
+        unexpected = sorted(set(finding) - {"severity", "summary", "path", "line", "no_path_reason"})
+        if unexpected:
+            raise ValueError(
+                f"{field_name}[{index}] contains unsupported fields: {', '.join(unexpected)}"
+            )
+        severity = finding.get("severity")
+        if severity not in VALID_REVIEW_FINDING_SEVERITIES:
+            allowed = ", ".join(sorted(VALID_REVIEW_FINDING_SEVERITIES))
+            raise ValueError(f"{field_name}[{index}].severity must be one of: {allowed}")
+        summary = _normalize_optional_text(finding.get("summary"))
+        if summary is None:
+            raise ValueError(f"{field_name}[{index}].summary must be a non-empty string")
+
+        normalized_finding: dict[str, Any] = {
+            "severity": severity,
+            "summary": summary,
+        }
+        raw_path = finding.get("path")
+        no_path_reason = _normalize_optional_text(finding.get("no_path_reason"))
+        if raw_path is not None and no_path_reason is not None:
+            raise ValueError(
+                f"{field_name}[{index}] must use either path or no_path_reason, not both"
+            )
+        if raw_path is None and no_path_reason is None:
+            raise ValueError(f"{field_name}[{index}] must include path or no_path_reason")
+        if raw_path is not None:
+            if not isinstance(raw_path, str):
+                raise ValueError(f"{field_name}[{index}].path must be a repo-relative path")
+            path = _normalize_repo_relative_path(raw_path, field_name=f"{field_name}[{index}].path")
+            if not _review_scope_path_is_covered_by_any(path, allowed_scope_paths):
+                raise ValueError(
+                    f"{field_name}[{index}].path is outside the step review scope for {step['id']}: {path}"
+                )
+            normalized_finding["path"] = path
+            line = finding.get("line")
+            if line is not None:
+                if not _is_positive_int(line):
+                    raise ValueError(f"{field_name}[{index}].line must be a positive integer")
+                normalized_finding["line"] = line
+        else:
+            if "line" in finding:
+                raise ValueError(f"{field_name}[{index}].line requires path")
+            normalized_finding["no_path_reason"] = no_path_reason
+
+        normalized.append(normalized_finding)
+        severity_ranks.append(_review_finding_severity_rank(severity))
+
+    if severity_ranks != sorted(severity_ranks):
+        raise ValueError(f"{field_name} must be ordered by severity")
+    return normalized
+
+
+def _review_finding_severity_rank(severity: str) -> int:
+    return {"P0": 0, "P1": 1, "P2": 2, "P3": 3}[severity]
+
+
 def canonical_review_summary(step: dict[str, Any]) -> str | None:
     review_record = step.get("review_record")
     if isinstance(review_record, dict):
@@ -1274,6 +1393,7 @@ def build_review_record_for_status(
     verification_commands: list[str] | None,
     agents_checked: list[str] | None,
     agents_updated: bool | None,
+    review_findings: list[str] | None,
     finding_count: int | None,
     checked_at: str | None = None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
@@ -1327,6 +1447,11 @@ def build_review_record_for_status(
             f"set-step-status {new_status} requires at least one --verification-command "
             "when --verification-status passed"
         )
+    normalized_findings: list[dict[str, Any]] = []
+    try:
+        normalized_findings = _parse_review_finding_flags(review_findings, step=step)
+    except ValueError as exc:
+        errors.append(str(exc))
     if errors:
         return None, errors
 
@@ -1349,6 +1474,7 @@ def build_review_record_for_status(
         "verification_commands": normalized_verification_commands,
         "agents_checked": normalized_agents_checked,
         "agents_updated": agents_updated,
+        "findings": normalized_findings,
         "finding_count": finding_count,
         "checked_at": checked_at or _utc_now_iso(),
     }
@@ -1378,6 +1504,8 @@ def validate_review_transition(
     if new_status == "commit_pending":
         if finding_count != 0:
             errors.append("set-step-status commit_pending requires --finding-count 0")
+        if review_record["findings"]:
+            errors.append("set-step-status commit_pending requires no --review-finding entries")
         if verification_status != "passed":
             errors.append(
                 "set-step-status commit_pending requires --verification-status passed"
@@ -1390,6 +1518,10 @@ def validate_review_transition(
     else:
         if finding_count <= 0:
             errors.append("set-step-status fix_pending requires --finding-count greater than 0")
+        if len(review_record["findings"]) != finding_count:
+            errors.append(
+                "set-step-status fix_pending requires one --review-finding entry per finding"
+            )
 
     try:
         _validate_review_record(review_record, step=step)
@@ -1889,7 +2021,8 @@ def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         "- Do not pad with style-only feedback.\n"
         "- Record scope confirmation and every reviewed path for the current step.\n"
         "- Record whether verification passed or is blocked, every verification command that ran, and the blocker note when blocked.\n"
-        "- Record every `AGENTS.md` file checked, whether any required updates were made, and the material finding count.\n\n"
+        "- Record every `AGENTS.md` file checked, whether any required updates were made, and the material finding count.\n"
+        "- For failed reviews, record one structured `--review-finding` JSON object per material finding.\n\n"
         f"Required checks before pass:\n{required_checks_lines}\n\n"
         "If you find issues:\n"
         f"- Run `{fix_command}`.\n"
@@ -1907,6 +2040,7 @@ def _review_required_checks(step: dict[str, Any]) -> list[str]:
         "Relevant verification commands ran and are recorded with --verification-command, or the blocker is recorded with --verification-status blocked and --verification-note.",
         "Review scope stayed inside the current execution step, recorded with --scope-confirmed true and --scope-reviewed-path.",
         "Every required AGENTS.md path was checked and recorded with --agents-checked.",
+        "Failed reviews include one --review-finding JSON object per counted finding, ordered by severity.",
     ]
     if step.get("validation_ownership"):
         checks.append(
@@ -1979,7 +2113,21 @@ def _review_status_command(
             finding_count,
         ]
     )
+    if status == "fix_pending":
+        command.extend(["--review-finding", shlex.quote(_default_review_finding_json(step))])
     return " ".join(command)
+
+
+def _default_review_finding_json(step: dict[str, Any]) -> str:
+    path = _default_scope_reviewed_paths(step)[0]
+    return json.dumps(
+        {
+            "severity": "P2",
+            "path": path,
+            "summary": "describe the material finding",
+        },
+        separators=(",", ":"),
+    )
 
 
 def _commit_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
@@ -2300,6 +2448,7 @@ def _validate_review_record(review_record: Any, *, step: dict[str, Any]) -> None
         "verification_commands",
         "agents_checked",
         "agents_updated",
+        "findings",
         "finding_count",
         "checked_at",
     }
@@ -2391,13 +2540,24 @@ def _validate_review_record(review_record: Any, *, step: dict[str, Any]) -> None
         )
     if not isinstance(review_record["agents_updated"], bool):
         raise ValueError(f"review_record.agents_updated must be a boolean for {step['id']}")
+    findings = _normalize_review_findings(
+        review_record["findings"],
+        step=step,
+        field_name=f"review_record.findings for {step['id']}",
+    )
     finding_count = review_record["finding_count"]
     if not isinstance(finding_count, int) or isinstance(finding_count, bool) or finding_count < 0:
         raise ValueError(f"review_record.finding_count must be a non-negative integer for {step['id']}")
     if outcome == "passed" and finding_count != 0:
         raise ValueError(f"review_record.outcome passed requires finding_count 0 for {step['id']}")
+    if outcome == "passed" and findings:
+        raise ValueError(f"review_record.outcome passed requires no findings for {step['id']}")
     if outcome == "failed" and finding_count <= 0:
         raise ValueError(f"review_record.outcome failed requires finding_count > 0 for {step['id']}")
+    if outcome == "failed" and len(findings) != finding_count:
+        raise ValueError(
+            f"review_record.findings must contain one entry per finding_count for {step['id']}"
+        )
     checked_at = review_record["checked_at"]
     if not isinstance(checked_at, str) or not checked_at.strip():
         raise ValueError(f"review_record.checked_at must be a non-empty string for {step['id']}")

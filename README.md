@@ -104,7 +104,7 @@ When using non-default workflow files, pass the matching `--planning-state-path`
   - `python3 .codex/workflow/scripts/planning_state.py compare-plan`
 - Execution state CLI:
   - `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> <status>`
-  - Review fail: `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> fix_pending --review-summary "..." --scope-confirmed true --scope-reviewed-path app/example/module.py --verification-status passed --verification-command "uv run pytest tests/example/test_module.py" --agents-checked AGENTS.md --agents-updated false --finding-count 1`
+  - Review fail: `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> fix_pending --review-summary "..." --scope-confirmed true --scope-reviewed-path app/example/module.py --verification-status passed --verification-command "uv run pytest tests/example/test_module.py" --agents-checked AGENTS.md --agents-updated false --finding-count 1 --review-finding '{"severity":"P2","path":"app/example/module.py","summary":"Describe the material finding"}'`
   - Review pass: `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> commit_pending --review-summary "review passed" --scope-confirmed true --scope-reviewed-path app/example/module.py --verification-status passed --verification-command "uv run pytest tests/example/test_module.py" --agents-checked AGENTS.md --agents-updated false --finding-count 0`
   - `python3 .codex/workflow/scripts/workflow_state.py resolve-escalation`
   - `python3 .codex/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`
@@ -119,7 +119,7 @@ Execution now ends with a blocking post-code control loop:
 2. `set-step-status ... review_pending` runs deterministic pre-review sensors before inferential review
 3. `execution_escalated` blocks the workflow when deterministic sensors fail or execution state becomes ambiguous
 4. Review remains embedded in execution and blocks promotion to commit
-   - `fix_pending` and `commit_pending` now require inline review evidence: summary, scope confirmation, reviewed scope paths, verification result, verification commands or blocker note, checked `AGENTS.md` paths, whether AGENTS changed, and the material finding count
+   - `fix_pending` and `commit_pending` now require inline review evidence: summary, scope confirmation, reviewed scope paths, verification result, verification commands or blocker note, checked `AGENTS.md` paths, whether AGENTS changed, material finding count, and structured findings for failed reviews
 5. `uat_pending` after the last committed step
 6. `gap_closure_pending` for fixable UAT gaps inside the same workflow
 7. `replan_required` when UAT shows a scope or architecture mismatch

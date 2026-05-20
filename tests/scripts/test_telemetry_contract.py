@@ -40,6 +40,7 @@ def _review_args(
     verification_commands: list[str] | None = None,
     agents_checked: list[str] | None = None,
     agents_updated: bool = False,
+    review_findings: list[dict[str, object]] | None = None,
     finding_count: int,
 ) -> tuple[str, ...]:
     args = [
@@ -64,6 +65,17 @@ def _review_args(
         args.extend(["--verification-command", command])
     for path in agents_checked or ["AGENTS.md"]:
         args.extend(["--agents-checked", path])
+    if review_findings is None and finding_count > 0:
+        review_findings = [
+            {
+                "severity": "P2",
+                "path": "app/ai/embedding/service.py",
+                "summary": f"Material review finding {index}",
+            }
+            for index in range(1, finding_count + 1)
+        ]
+    for finding in review_findings or []:
+        args.extend(["--review-finding", json.dumps(finding)])
     args.extend(
         [
             "--agents-updated",
@@ -439,12 +451,14 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
     assert first_review_failed["verification_note"] is None
     assert first_review_failed["agents_checked_count"] == 1
     assert first_review_failed["agents_updated"] is False
+    assert first_review_failed["finding_records_count"] == 1
     assert first_review_failed["finding_count"] == 1
     assert first_review_passed["scope_confirmed"] is True
     assert first_review_passed["verification_status"] == "passed"
     assert first_review_passed["verification_note"] is None
     assert first_review_passed["agents_checked_count"] == 1
     assert first_review_passed["agents_updated"] is False
+    assert first_review_passed["finding_records_count"] == 0
     assert first_review_passed["finding_count"] == 0
 
 
