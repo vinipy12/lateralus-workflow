@@ -38,6 +38,7 @@ def _review_args(
     verification_status: str = "passed",
     verification_note: str | None = None,
     verification_commands: list[str] | None = None,
+    residual_testing_gaps: list[str] | None = None,
     agents_checked: list[str] | None = None,
     agents_updated: bool = False,
     review_findings: list[dict[str, object]] | None = None,
@@ -63,6 +64,10 @@ def _review_args(
         verification_commands = ["uv run pytest tests/ai/test_embedding_service.py"]
     for command in verification_commands or []:
         args.extend(["--verification-command", command])
+    if residual_testing_gaps is None and finding_count == 0:
+        residual_testing_gaps = ["none noted"]
+    for gap in residual_testing_gaps or []:
+        args.extend(["--residual-testing-gap", gap])
     for path in agents_checked or ["AGENTS.md"]:
         args.extend(["--agents-checked", path])
     if review_findings is None and finding_count > 0:
@@ -453,6 +458,7 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
     assert first_review_failed["agents_updated"] is False
     assert first_review_failed["finding_records_count"] == 1
     assert first_review_failed["finding_count"] == 1
+    assert first_review_failed["residual_testing_gaps_count"] == 0
     assert first_review_passed["scope_confirmed"] is True
     assert first_review_passed["verification_status"] == "passed"
     assert first_review_passed["verification_note"] is None
@@ -460,6 +466,7 @@ def test_workflow_state_emits_review_uat_ship_and_override_metrics():
     assert first_review_passed["agents_updated"] is False
     assert first_review_passed["finding_records_count"] == 0
     assert first_review_passed["finding_count"] == 0
+    assert first_review_passed["residual_testing_gaps_count"] == 1
 
 
 def test_workflow_state_emits_escalation_and_repeated_loop_metrics():

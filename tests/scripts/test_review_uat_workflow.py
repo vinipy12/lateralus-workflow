@@ -37,6 +37,7 @@ def _review_args(
     verification_status: str = "passed",
     verification_note: str | None = None,
     verification_commands: list[str] | None = None,
+    residual_testing_gaps: list[str] | None = None,
     agents_checked: list[str] | None = None,
     agents_updated: bool = False,
     review_findings: list[dict[str, object]] | None = None,
@@ -62,6 +63,10 @@ def _review_args(
         verification_commands = ["uv run pytest tests/ai/test_embedding_service.py"]
     for command in verification_commands or []:
         args.extend(["--verification-command", command])
+    if residual_testing_gaps is None and finding_count == 0:
+        residual_testing_gaps = ["none noted"]
+    for gap in residual_testing_gaps or []:
+        args.extend(["--residual-testing-gap", gap])
     for path in agents_checked or ["AGENTS.md"]:
         args.extend(["--agents-checked", path])
     if review_findings is None and finding_count > 0:
@@ -146,6 +151,7 @@ def test_review_pending_step_blocks_for_review_gate():
     assert "--scope-confirmed true" in decision.prompt
     assert "--scope-reviewed-path app/example/module.py" in decision.prompt
     assert "--verification-command 'uv run pytest tests/example/test_module.py'" in decision.prompt
+    assert "--residual-testing-gap 'none noted'" in decision.prompt
     assert "--agents-checked AGENTS.md" in decision.prompt
     assert "--review-finding" in decision.prompt
     assert "one structured `--review-finding` JSON object per material finding" in decision.prompt
@@ -165,6 +171,7 @@ def test_review_pending_prompt_surfaces_required_checks_for_guidance_updates():
     assert "Required checks before pass" in decision.prompt
     assert "Relevant verification commands ran" in decision.prompt
     assert "Review scope stayed inside the current execution step" in decision.prompt
+    assert "Passing reviews record residual testing gaps" in decision.prompt
     assert "Every required AGENTS.md path was checked" in decision.prompt
     assert "a passing review must use --agents-updated true" in decision.prompt
 
@@ -644,6 +651,9 @@ def test_legacy_review_record_backfills_agents_path_for_empty_step_scope_default
 
     assert persisted_state["steps"][0]["review_record"]["scope_reviewed_paths"] == ["AGENTS.md"]
     assert persisted_state["steps"][0]["review_record"]["findings"] == []
+    assert persisted_state["steps"][0]["review_record"]["residual_testing_gaps"] == [
+        "not recorded; legacy review record predates residual testing gap evidence"
+    ]
 
 
 def test_legacy_failed_review_record_backfills_structured_findings():
@@ -682,6 +692,7 @@ def test_legacy_failed_review_record_backfills_structured_findings():
             "no_path_reason": "legacy review record predates structured finding evidence",
         }
     ]
+    assert persisted_state["steps"][0]["review_record"]["residual_testing_gaps"] == []
 
 
 def test_workflow_state_commit_pending_rejected_when_verification_is_blocked():
@@ -823,6 +834,53 @@ def test_workflow_state_commit_pending_accepts_recorded_required_agents_update()
     assert result.returncode == 0, result.stderr
     assert persisted_state["steps"][0]["status"] == "commit_pending"
     assert persisted_state["steps"][0]["review_record"]["agents_updated"] is True
+
+
+def test_workflow_state_commit_pending_rejected_without_residual_testing_gap_evidence():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="No material findings.",
+                residual_testing_gaps=[],
+                finding_count=0,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "--residual-testing-gap" in result.stderr
+
+
+def test_workflow_state_commit_pending_persists_residual_testing_gap_evidence():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "commit_pending",
+            *_review_args(
+                summary="No material findings.",
+                residual_testing_gaps=["only focused step tests ran"],
+                finding_count=0,
+            ),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["steps"][0]["review_record"]["residual_testing_gaps"] == [
+        "only focused step tests ran"
+    ]
 
 
 def test_plan_step_infers_required_agents_update_from_agents_path_changes():
@@ -1025,6 +1083,7 @@ def test_workflow_state_fix_pending_persists_review_record():
     assert review_record["verification_status"] == "passed"
     assert review_record["verification_note"] is None
     assert review_record["verification_commands"] == ["uv run pytest tests/ai/test_embedding_service.py"]
+    assert review_record["residual_testing_gaps"] == []
     assert review_record["agents_checked"] == ["AGENTS.md"]
     assert review_record["agents_updated"] is False
     assert review_record["findings"] == [
@@ -1070,6 +1129,7 @@ def test_workflow_state_commit_pending_persists_review_record():
     ]
     assert review_record["verification_status"] == "passed"
     assert review_record["verification_commands"] == ["uv run pytest tests/ai/test_embedding_service.py"]
+    assert review_record["residual_testing_gaps"] == ["none noted"]
 
 
 def test_workflow_state_review_summary_compatibility_remains_intact():
