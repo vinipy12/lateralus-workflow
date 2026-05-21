@@ -39,6 +39,7 @@ def _review_args(
     verification_commands: list[str] | None = None,
     agents_checked: list[str] | None = None,
     agents_updated: bool = False,
+    review_findings: list[dict[str, object]] | None = None,
     finding_count: int,
 ) -> tuple[str, ...]:
     args = [
@@ -63,6 +64,17 @@ def _review_args(
         args.extend(["--verification-command", command])
     for path in agents_checked or ["AGENTS.md"]:
         args.extend(["--agents-checked", path])
+    if review_findings is None and finding_count > 0:
+        review_findings = [
+            {
+                "severity": "P2",
+                "path": "app/ai/embedding/service.py",
+                "summary": f"Material review finding {index}",
+            }
+            for index in range(1, finding_count + 1)
+        ]
+    for finding in review_findings or []:
+        args.extend(["--review-finding", json.dumps(finding)])
     args.extend(
         [
             "--agents-updated",
@@ -135,6 +147,8 @@ def test_review_pending_step_blocks_for_review_gate():
     assert "--scope-reviewed-path app/example/module.py" in decision.prompt
     assert "--verification-command 'uv run pytest tests/example/test_module.py'" in decision.prompt
     assert "--agents-checked AGENTS.md" in decision.prompt
+    assert "--review-finding" in decision.prompt
+    assert "one structured `--review-finding` JSON object per material finding" in decision.prompt
     assert "--finding-count 0" in decision.prompt
 
 
@@ -629,6 +643,45 @@ def test_legacy_review_record_backfills_agents_path_for_empty_step_scope_default
         persisted_state = workflow_lib.load_state(state_path)
 
     assert persisted_state["steps"][0]["review_record"]["scope_reviewed_paths"] == ["AGENTS.md"]
+    assert persisted_state["steps"][0]["review_record"]["findings"] == []
+
+
+def test_legacy_failed_review_record_backfills_structured_findings():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = Path(tmpdir) / "state.json"
+        state = _build_execution_state(workflow_lib, tmpdir)
+        step = state["steps"][0]
+        step["status"] = "fix_pending"
+        step["review_summary"] = "Missing regression assertion."
+        step["review_record"] = {
+            "outcome": "failed",
+            "summary": "Missing regression assertion.",
+            "scope_confirmed": True,
+            "scope_reviewed_paths": [
+                "app/ai/embedding/service.py",
+                "tests/ai/test_embedding_service.py",
+            ],
+            "verification_status": "passed",
+            "verification_note": None,
+            "verification_commands": ["uv run pytest tests/ai/test_embedding_service.py"],
+            "agents_checked": ["AGENTS.md"],
+            "agents_updated": False,
+            "finding_count": 1,
+            "checked_at": "2026-01-01T00:00:00Z",
+        }
+        state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert persisted_state["steps"][0]["review_record"]["findings"] == [
+        {
+            "severity": "P2",
+            "summary": "Missing regression assertion.",
+            "no_path_reason": "legacy review record predates structured finding evidence",
+        }
+    ]
 
 
 def test_workflow_state_commit_pending_rejected_when_verification_is_blocked():
@@ -822,6 +875,127 @@ def test_workflow_state_fix_pending_rejected_when_blocked_verification_has_no_no
     assert "--verification-note" in result.stderr
 
 
+def test_workflow_state_fix_pending_rejected_without_structured_finding_evidence():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "fix_pending",
+            *_review_args(
+                summary="Missing regression assertion.",
+                review_findings=[],
+                finding_count=1,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "--review-finding" in result.stderr
+
+
+def test_workflow_state_fix_pending_rejected_when_finding_path_is_out_of_scope():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "fix_pending",
+            *_review_args(
+                summary="Missing regression assertion.",
+                review_findings=[
+                    {
+                        "severity": "P2",
+                        "path": "app/unrelated/module.py",
+                        "summary": "Finding path is outside the reviewed step scope.",
+                    }
+                ],
+                finding_count=1,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "outside the step review scope" in result.stderr
+    assert "app/unrelated/module.py" in result.stderr
+
+
+def test_workflow_state_fix_pending_rejected_when_findings_are_not_severity_ordered():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "fix_pending",
+            *_review_args(
+                summary="Review findings are not ordered by severity.",
+                review_findings=[
+                    {
+                        "severity": "P3",
+                        "path": "app/ai/embedding/service.py",
+                        "summary": "Lower severity finding appears first.",
+                    },
+                    {
+                        "severity": "P1",
+                        "path": "tests/ai/test_embedding_service.py",
+                        "summary": "Higher severity finding appears second.",
+                    },
+                ],
+                finding_count=2,
+            ),
+        )
+
+    assert result.returncode != 0
+    assert "ordered by severity" in result.stderr
+
+
+def test_workflow_state_fix_pending_accepts_finding_with_no_file_reference_reason():
+    workflow_lib = load_workflow_lib()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_path = _prepare_review_pending_state(workflow_lib, tmpdir)
+
+        result = run_workflow_state_command(
+            state_path,
+            "set-step-status",
+            "step-1",
+            "fix_pending",
+            *_review_args(
+                summary="Verification was blocked before a file-specific finding.",
+                verification_status="blocked",
+                verification_note="Required local service was unavailable.",
+                review_findings=[
+                    {
+                        "severity": "P2",
+                        "summary": "Verification could not run to completion.",
+                        "no_path_reason": "blocked verification has no file-specific location",
+                    }
+                ],
+                finding_count=1,
+            ),
+        )
+        persisted_state = workflow_lib.load_state(state_path)
+
+    assert result.returncode == 0, result.stderr
+    assert persisted_state["steps"][0]["review_record"]["findings"] == [
+        {
+            "severity": "P2",
+            "summary": "Verification could not run to completion.",
+            "no_path_reason": "blocked verification has no file-specific location",
+        }
+    ]
+
+
 def test_workflow_state_fix_pending_persists_review_record():
     workflow_lib = load_workflow_lib()
 
@@ -853,6 +1027,18 @@ def test_workflow_state_fix_pending_persists_review_record():
     assert review_record["verification_commands"] == ["uv run pytest tests/ai/test_embedding_service.py"]
     assert review_record["agents_checked"] == ["AGENTS.md"]
     assert review_record["agents_updated"] is False
+    assert review_record["findings"] == [
+        {
+            "severity": "P2",
+            "summary": "Material review finding 1",
+            "path": "app/ai/embedding/service.py",
+        },
+        {
+            "severity": "P2",
+            "summary": "Material review finding 2",
+            "path": "app/ai/embedding/service.py",
+        },
+    ]
     assert review_record["finding_count"] == 2
     assert review_record["checked_at"].endswith("Z")
 
@@ -877,6 +1063,7 @@ def test_workflow_state_commit_pending_persists_review_record():
     assert persisted_state["steps"][0]["status"] == "commit_pending"
     assert review_record["outcome"] == "passed"
     assert review_record["finding_count"] == 0
+    assert review_record["findings"] == []
     assert review_record["scope_reviewed_paths"] == [
         "app/ai/embedding/service.py",
         "tests/ai/test_embedding_service.py",

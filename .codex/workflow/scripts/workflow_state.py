@@ -60,6 +60,7 @@ def main() -> int:
     step_parser.add_argument("--verification-command", action="append", default=None)
     step_parser.add_argument("--agents-checked", action="append", default=None)
     step_parser.add_argument("--agents-updated", choices=("true", "false"), default=None)
+    step_parser.add_argument("--review-finding", action="append", default=None)
     step_parser.add_argument("--finding-count", type=int, default=None)
     step_parser.add_argument("--override-reason", default=None)
     step_parser.add_argument("--branch", default=None)
@@ -147,6 +148,7 @@ def main() -> int:
             verification_commands=args.verification_command,
             agents_checked=args.agents_checked,
             agents_updated=_parse_explicit_bool(args.agents_updated),
+            review_findings=args.review_finding,
             finding_count=args.finding_count,
         )
         if review_errors:
@@ -426,6 +428,7 @@ def _emit_step_metrics(state: dict, step: dict, *, status: str) -> None:
                 "verification_commands_count": len(review_record["verification_commands"]),
                 "agents_checked_count": len(review_record["agents_checked"]),
                 "agents_updated": review_record["agents_updated"],
+                "finding_records_count": len(review_record["findings"]),
                 "finding_count": review_record["finding_count"],
             }
         )

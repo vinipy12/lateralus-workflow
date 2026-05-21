@@ -439,6 +439,7 @@
               "verification_commands",
               "agents_checked",
               "agents_updated",
+              "findings",
               "finding_count",
               "checked_at"
             ],
@@ -495,6 +496,75 @@
               },
               "agents_updated": {
                 "type": "boolean"
+              },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "severity",
+                    "summary"
+                  ],
+                  "oneOf": [
+                    {
+                      "required": [
+                        "path"
+                      ],
+                      "not": {
+                        "required": [
+                          "no_path_reason"
+                        ]
+                      }
+                    },
+                    {
+                      "required": [
+                        "no_path_reason"
+                      ],
+                      "not": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "path"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "line"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "properties": {
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "P0",
+                        "P1",
+                        "P2",
+                        "P3"
+                      ]
+                    },
+                    "summary": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "line": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "no_path_reason": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
               },
               "finding_count": {
                 "type": "integer",
