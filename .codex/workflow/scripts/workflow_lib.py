@@ -1219,6 +1219,10 @@ def _normalize_state_compat(state: Any, path: Path) -> dict[str, Any]:
                 review_record = dict(review_record)
                 review_record["findings"] = _legacy_review_findings_for_record(review_record)
                 normalized_step["review_record"] = review_record
+            if isinstance(review_record, dict) and "residual_testing_gaps" not in review_record:
+                review_record = dict(review_record)
+                review_record["residual_testing_gaps"] = _legacy_residual_testing_gaps_for_record(review_record)
+                normalized_step["review_record"] = review_record
             normalized_steps.append(normalized_step)
         normalized["steps"] = normalized_steps
     return normalized
@@ -1295,6 +1299,12 @@ def _legacy_review_findings_for_record(review_record: dict[str, Any]) -> list[di
         }
         for _ in range(finding_count)
     ]
+
+
+def _legacy_residual_testing_gaps_for_record(review_record: dict[str, Any]) -> list[str]:
+    if review_record.get("outcome") != "passed":
+        return []
+    return ["not recorded; legacy review record predates residual testing gap evidence"]
 
 
 def _normalize_review_findings(
@@ -1391,6 +1401,7 @@ def build_review_record_for_status(
     verification_status: str | None,
     verification_note: str | None,
     verification_commands: list[str] | None,
+    residual_testing_gaps: list[str] | None,
     agents_checked: list[str] | None,
     agents_updated: bool | None,
     review_findings: list[str] | None,
@@ -1447,6 +1458,14 @@ def build_review_record_for_status(
             f"set-step-status {new_status} requires at least one --verification-command "
             "when --verification-status passed"
         )
+    normalized_residual_testing_gaps: list[str] = []
+    try:
+        normalized_residual_testing_gaps = _ensure_string_list(
+            residual_testing_gaps,
+            field_name=f"review_record.residual_testing_gaps for {step['id']}",
+        )
+    except ValueError as exc:
+        errors.append(str(exc))
     normalized_findings: list[dict[str, Any]] = []
     try:
         normalized_findings = _parse_review_finding_flags(review_findings, step=step)
@@ -1472,6 +1491,7 @@ def build_review_record_for_status(
         "verification_status": verification_status,
         "verification_note": note,
         "verification_commands": normalized_verification_commands,
+        "residual_testing_gaps": normalized_residual_testing_gaps,
         "agents_checked": normalized_agents_checked,
         "agents_updated": agents_updated,
         "findings": normalized_findings,
@@ -2021,6 +2041,7 @@ def _review_prompt(state: dict[str, Any], step: dict[str, Any]) -> str:
         "- Do not pad with style-only feedback.\n"
         "- Record scope confirmation and every reviewed path for the current step.\n"
         "- Record whether verification passed or is blocked, every verification command that ran, and the blocker note when blocked.\n"
+        "- For passing reviews, record residual testing gaps or an explicit none noted statement.\n"
         "- Record every `AGENTS.md` file checked, whether any required updates were made, and the material finding count.\n"
         "- For failed reviews, record one structured `--review-finding` JSON object per material finding.\n\n"
         f"Required checks before pass:\n{required_checks_lines}\n\n"
@@ -2039,6 +2060,7 @@ def _review_required_checks(step: dict[str, Any]) -> list[str]:
     checks = [
         "Relevant verification commands ran and are recorded with --verification-command, or the blocker is recorded with --verification-status blocked and --verification-note.",
         "Review scope stayed inside the current execution step, recorded with --scope-confirmed true and --scope-reviewed-path.",
+        "Passing reviews record residual testing gaps with --residual-testing-gap, or an explicit none noted statement.",
         "Every required AGENTS.md path was checked and recorded with --agents-checked.",
         "Failed reviews include one --review-finding JSON object per counted finding, ordered by severity.",
     ]
@@ -2103,6 +2125,8 @@ def _review_status_command(
     if verification_status == "passed":
         for verify_cmd in step["verify_cmds"]:
             command.extend(["--verification-command", shlex.quote(verify_cmd)])
+    if status == "commit_pending":
+        command.extend(["--residual-testing-gap", shlex.quote("none noted")])
     for path in step["agents_paths"]:
         command.extend(["--agents-checked", shlex.quote(path)])
     command.extend(
@@ -2446,6 +2470,7 @@ def _validate_review_record(review_record: Any, *, step: dict[str, Any]) -> None
         "verification_status",
         "verification_note",
         "verification_commands",
+        "residual_testing_gaps",
         "agents_checked",
         "agents_updated",
         "findings",
@@ -2517,6 +2542,15 @@ def _validate_review_record(review_record: Any, *, step: dict[str, Any]) -> None
                 "review_record.verification_commands must include every verify_cmd for "
                 f"{step['id']}: {', '.join(missing_verify_cmds)}"
             )
+    residual_testing_gaps = _ensure_string_list(
+        review_record["residual_testing_gaps"],
+        field_name=f"review_record.residual_testing_gaps for {step['id']}",
+    )
+    if outcome == "passed" and not residual_testing_gaps:
+        raise ValueError(
+            "review_record.residual_testing_gaps is required for passed reviews on "
+            f"{step['id']}; record it with --residual-testing-gap"
+        )
     agents_checked = _ensure_agents_paths(
         review_record["agents_checked"],
         field_name=f"review_record.agents_checked for {step['id']}",

@@ -2,17 +2,17 @@
 
 ## Current Repo State
 
-- Current checkout branch is `kernel-review-finding-evidence`.
+- Current checkout branch is `kernel-review-residual-gap-evidence`.
 - `python3 .codex/workflow/scripts/workflow_router.py status` reports no active workflow state.
-- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `154` tests.
+- The scripts regression suite is green: `uv run pytest tests/scripts/` passed with `156` tests.
 - `execution-start` now honors custom `--planning-state-path` and `--execution-state-path` pairs, so custom-path workflows get the same planning/execution guardrails as the default path.
 - Planning audits now support `current.direct_verification_matrix`, and the repo no longer relies on placeholder consumer-path test files to prove direct-consumer coverage.
 - Focused regression coverage now includes `tests/scripts/test_workflow_contract.py`, `tests/scripts/test_planning_lifecycle.py`, `tests/scripts/test_workflow_router_lifecycle.py`, `tests/scripts/test_workflow_router_cli.py`, `tests/scripts/test_planning_audit.py`, `tests/scripts/test_planning_audit_integration.py`, `tests/scripts/test_plugin_surface.py`, `tests/scripts/test_workflow_hooks.py`, `tests/scripts/test_review_uat_workflow.py`, and `tests/scripts/test_telemetry_contract.py`.
 - Review/UAT control-loop behavior and telemetry contracts are now first-class focused suites instead of assertions buried inside the monolith.
 - Execution control hardening is now landed for the current kernel slice:
   deterministic pre-review sensors gate `review_pending`, execution blockers move into explicit `execution_escalated` state with structured metadata, and scorecards now expose escalation categories plus repeated review/UAT loop counts.
-- Review-loop hardening now has explicit scope-reviewed path evidence, verification-command evidence, structured failed-review finding evidence, and the `agents_update_required` step contract for durable-guidance changes.
-  Passing review cannot advance to `commit_pending` unless reviewed paths stay inside the step scope, recorded verification commands include every configured `verify_cmd`, and steps marked `agents_update_required` record AGENTS guidance updates.
+- Review-loop hardening now has explicit scope-reviewed path evidence, verification-command evidence, residual testing-gap evidence for passing reviews, structured failed-review finding evidence, and the `agents_update_required` step contract for durable-guidance changes.
+  Passing review cannot advance to `commit_pending` unless reviewed paths stay inside the step scope, recorded verification commands include every configured `verify_cmd`, residual testing gaps are recorded, and steps marked `agents_update_required` record AGENTS guidance updates.
 - PR stewardship is now part of the `$ship` guidance for requested Codex reviews.
   The ship loop watches Codex review comments, applies relevant fixes, requests re-review, and stops only when Codex reports the branch is clean or escalation is required.
   Broader CI and quality-gate stewardship remains a future capability.
@@ -135,7 +135,7 @@
 6. Router planning/execution/resume lifecycle checks now live in `tests/scripts/test_workflow_router_lifecycle.py`.
 7. Compatibility-audit and repo-memory planning-audit integration checks now live in `tests/scripts/test_planning_audit_integration.py`.
 8. `tests/scripts/test_codex_workflow.py` has been retired.
-9. Full scripts regression remains green with `154` tests.
+9. Full scripts regression remains green with `156` tests.
 
 #### Review Loop Hardening: Started
 
@@ -143,13 +143,14 @@
 2. Review records are rejected when scope is confirmed without reviewed-path evidence or when reviewed paths fall outside the step review scope.
 3. Passing and failing review records now store repeatable `verification_commands` from `--verification-command`.
 4. Any review record marked `--verification-status passed` is rejected unless the recorded commands include every configured `verify_cmd` for the step.
-5. Failed review records now store structured `findings` from repeatable `--review-finding` JSON evidence, with severity ordering plus scoped path or no-path reason validation.
-6. The `agents_update_required` stale-guidance check remains mechanical; remaining review-loop work should target review-quality checks that are still prompt-only.
+5. Passing review records now store repeatable `residual_testing_gaps` from `--residual-testing-gap`, so clean reviews must record residual testing gaps or an explicit none-noted statement.
+6. Failed review records now store structured `findings` from repeatable `--review-finding` JSON evidence, with severity ordering plus scoped path or no-path reason validation.
+7. The `agents_update_required` stale-guidance check remains mechanical; remaining review-loop work should target review-quality checks that are still prompt-only.
 
 #### Remaining Slice Candidates
 
 1. Continue tightening the review loop against `code_review.md`.
-   Scope-reviewed path evidence, verification-command evidence, failed-review finding evidence, and the `agents_update_required` stale-guidance check are now mechanical; remaining work should focus on review-quality checks that are still prompt-only.
+   Scope-reviewed path evidence, verification-command evidence, clean-review residual testing-gap evidence, failed-review finding evidence, and the `agents_update_required` stale-guidance check are now mechanical; remaining work should focus on review-quality checks that are still prompt-only.
 2. Harden planning convergence and bootstrap contracts further if they still represent the highest residual kernel risk after more dogfood runs.
 3. Verify telemetry as a contract beyond the execution slice where needed, now that repeated failure and escalation categories are part of the harness contract.
 4. Keep full PR-stewardship state-machine work out of the next implementation slice until the kernel can reliably reach `ship_pending` and produce grounded PRs.

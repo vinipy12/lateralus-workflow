@@ -58,6 +58,7 @@ def main() -> int:
     )
     step_parser.add_argument("--verification-note", default=None)
     step_parser.add_argument("--verification-command", action="append", default=None)
+    step_parser.add_argument("--residual-testing-gap", action="append", default=None)
     step_parser.add_argument("--agents-checked", action="append", default=None)
     step_parser.add_argument("--agents-updated", choices=("true", "false"), default=None)
     step_parser.add_argument("--review-finding", action="append", default=None)
@@ -146,6 +147,7 @@ def main() -> int:
             verification_status=args.verification_status,
             verification_note=args.verification_note,
             verification_commands=args.verification_command,
+            residual_testing_gaps=args.residual_testing_gap,
             agents_checked=args.agents_checked,
             agents_updated=_parse_explicit_bool(args.agents_updated),
             review_findings=args.review_finding,
@@ -426,6 +428,7 @@ def _emit_step_metrics(state: dict, step: dict, *, status: str) -> None:
                 "verification_status": review_record["verification_status"],
                 "verification_note": review_record["verification_note"],
                 "verification_commands_count": len(review_record["verification_commands"]),
+                "residual_testing_gaps_count": len(review_record["residual_testing_gaps"]),
                 "agents_checked_count": len(review_record["agents_checked"]),
                 "agents_updated": review_record["agents_updated"],
                 "finding_records_count": len(review_record["findings"]),

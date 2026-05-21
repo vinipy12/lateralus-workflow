@@ -105,7 +105,7 @@ When using non-default workflow files, pass the matching `--planning-state-path`
 - Execution state CLI:
   - `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> <status>`
   - Review fail: `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> fix_pending --review-summary "..." --scope-confirmed true --scope-reviewed-path app/example/module.py --verification-status passed --verification-command "uv run pytest tests/example/test_module.py" --agents-checked AGENTS.md --agents-updated false --finding-count 1 --review-finding '{"severity":"P2","path":"app/example/module.py","summary":"Describe the material finding"}'`
-  - Review pass: `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> commit_pending --review-summary "review passed" --scope-confirmed true --scope-reviewed-path app/example/module.py --verification-status passed --verification-command "uv run pytest tests/example/test_module.py" --agents-checked AGENTS.md --agents-updated false --finding-count 0`
+  - Review pass: `python3 .codex/workflow/scripts/workflow_state.py set-step-status <step-id> commit_pending --review-summary "No material findings." --scope-confirmed true --scope-reviewed-path app/example/module.py --verification-status passed --verification-command "uv run pytest tests/example/test_module.py" --residual-testing-gap "none noted" --agents-checked AGENTS.md --agents-updated false --finding-count 0`
   - `python3 .codex/workflow/scripts/workflow_state.py resolve-escalation`
   - `python3 .codex/workflow/scripts/workflow_state.py set-uat-status <passed|failed-gap|failed-replan> --summary "..."`
   - `python3 .codex/workflow/scripts/workflow_state.py set-workflow-status complete`
